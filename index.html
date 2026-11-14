@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="경주시 가축방역 상황실 벽면 현황판: 전국 가축 전염병 발생 지도와 경주시 기준 상황">
+<title>가축방역 상황실</title>
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="status" id="status" data-level="loading">
+    <span class="badge" id="badge">확인 중</span>
+    <div class="status-text">
+      <p class="headline" id="headline">자료를 불러오는 중입니다</p>
+      <p class="subline" id="subline"></p>
+    </div>
+  </div>
+  <div class="controls">
+    <div class="periods" id="periods" role="group" aria-label="조회 기간">
+      <button type="button" data-days="30">30일</button>
+      <button type="button" data-days="90">90일</button>
+      <button type="button" data-days="365">1년</button>
+    </div>
+    <div class="clock">
+      <time id="clock"></time>
+      <span id="updated"></span>
+    </div>
+  </div>
+</header>
+
+<div id="notice" class="notice" role="status" hidden></div>
+
+<main class="board">
+  <aside class="col">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>질병별 발생</h2>
+        <span class="muted" id="periodLabel"></span>
+      </div>
+      <ul id="counts" class="counts"></ul>
+      <p class="hint">누르면 지도와 막대그래프에서 켜고 끕니다</p>
+    </section>
+    <section class="panel grow">
+      <div class="panel-head">
+        <h2>최근 발생</h2>
+        <span class="muted" id="recentCount"></span>
+      </div>
+      <ol id="recent" class="rows"></ol>
+    </section>
+  </aside>
+
+  <div class="center">
+    <div id="map" role="region" aria-label="발생 지도"></div>
+    <section class="chart-panel" id="chartPanel">
+      <div class="panel-head">
+        <h2 id="chartTitle">날짜별 발생 건수</h2>
+        <span class="muted" id="chartNote"></span>
+      </div>
+      <div class="chart" id="chart"></div>
+      <div class="tip" id="tip" hidden></div>
+    </section>
+  </div>
+
+  <aside class="col">
+    <section class="panel">
+      <div class="panel-head">
+        <h2><span class="homeName">경주시</span> 기준 발생</h2>
+        <span class="muted" id="statLabel"></span>
+      </div>
+      <div class="stats">
+        <div class="stat" id="statHomeBox"><b id="statHome">0</b><span><span class="homeName">경주시</span> 관내</span></div>
+        <div class="stat"><b id="statRegion">0</b><span id="regionLabel">도내</span></div>
+        <div class="stat"><b id="statAll">0</b><span>전국</span></div>
+      </div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>가까운 주요 질병</h2>
+        <span class="muted">시청에서 직선거리</span>
+      </div>
+      <ol id="nearest" class="rows"></ol>
+    </section>
+    <section class="panel grow">
+      <h2>지도 보는 법</h2>
+      <ul class="legend">
+        <li><i class="ring r1"></i>500m 관리지역</li>
+        <li><i class="ring r2"></i>3km 보호지역</li>
+        <li><i class="ring r3"></i>10km 예찰지역</li>
+        <li><i class="ring home"></i>시청 50km 기준선</li>
+      </ul>
+      <p class="hint">방역대는 최근 30일 안에 발생해 아직 종식되지 않은 주요 질병에만 그립니다. 주소가 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
+      <p class="hint" id="unlocated"></p>
+      <p class="hint" id="source"></p>
+    </section>
+  </aside>
+</main>
+<script src="vendor/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
