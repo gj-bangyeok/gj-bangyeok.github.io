@@ -120,7 +120,10 @@
       radius: WATCH_KM * 1000, color: token('--map-ink'), weight: 2, opacity: 0.75, dashArray: '10 8',
       fill: false, interactive: false
     }).addTo(state.map);
-    var pin = el('div', 'home-pin', home.name + '청');
+    // 시청 바로 옆에 거점소독시설이 있어서, 이름표는 점 오른쪽(바다 쪽)으로 비켜 둔다
+    var pin = el('div', 'home-mark');
+    pin.appendChild(el('span', 'home-dot'));
+    pin.appendChild(el('span', 'home-pin', home.name + '청'));
     L.marker([home.lat, home.lng], {
       icon: L.divIcon({ className: '', html: pin, iconSize: null, iconAnchor: [0, 0] }),
       interactive: false, zIndexOffset: 2000, keyboard: false
@@ -136,15 +139,15 @@
     state.facLayer.clearLayers();
     fac.forEach(function (f) {
       if (f.lat == null || f.lng == null) return;
-      var icon = facIcon(24);
+      var icon = facIcon(18);
       icon.setAttribute('class', 'mk');
       var box = el('div');
       box.appendChild(el('b', null, f.name));
       box.appendChild(el('div', null, f.addr));
       if (f.geo === 'road') box.appendChild(el('div', null, '도로 위치 기준이라 실제 건물과 조금 다를 수 있습니다'));
       L.marker([f.lat, f.lng], {
-        icon: L.divIcon({ className: '', html: icon, iconSize: [24, 24], iconAnchor: [12, 12] }),
-        zIndexOffset: 1500, title: f.name, alt: f.name
+        icon: L.divIcon({ className: '', html: icon, iconSize: [18, 18], iconAnchor: [9, 9] }),
+        zIndexOffset: 2500, title: f.name, alt: f.name
       }).bindPopup(box).addTo(state.facLayer);
     });
     var parts = [];

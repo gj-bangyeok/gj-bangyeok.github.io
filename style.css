@@ -264,7 +264,16 @@ button.row:hover { background: var(--surface-2); }
 .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
 .leaflet-container a.leaflet-popup-close-button:hover { color: var(--text); }
 .mk { display: block; }
+.home-mark { position: relative; width: 0; height: 0; }
+.home-dot {
+  position: absolute; left: -6px; top: -6px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: var(--home-pin-bg); border: 3px solid var(--home-pin-text);
+  box-shadow: 0 1px 4px var(--shadow);
+}
 .home-pin {
+  position: absolute;
+  left: 26px; top: 0;
   display: inline-block;
   padding: 4px 12px;
   border-radius: var(--radius-sm);
@@ -274,7 +283,12 @@ button.row:hover { background: var(--surface-2); }
   font-size: 15px;
   white-space: nowrap;
   box-shadow: 0 2px 6px var(--shadow);
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
+}
+/* 점과 이름표를 잇는 짧은 선 */
+.home-pin::before {
+  content: ''; position: absolute; right: 100%; top: 50%;
+  width: 20px; height: 2px; margin-top: -1px; background: var(--home-pin-bg);
 }
 
 .chart-panel { position: relative; padding: 12px 20px 8px; background: var(--surface); color: var(--text); border-top: 1px solid var(--line); }
