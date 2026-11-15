@@ -83,8 +83,17 @@
     <div class="past-tag" id="pastTag" hidden></div>
     <section class="chart-panel" id="chartPanel">
       <div class="panel-head">
-        <h2 id="chartTitle">날짜별 발생 건수</h2>
-        <span class="muted" id="chartNote"></span>
+        <div class="chart-head">
+          <h2 id="chartTitle">날짜별 발생 건수</h2>
+          <div class="range-quick unit-seg" id="chartUnit" role="group" aria-label="그래프 단위">
+            <button type="button" data-u="auto" title="조회 기간 길이에 맞춰 일·주·월 단위를 자동으로 고릅니다">자동</button>
+            <button type="button" data-u="day" title="하루씩 묶어 표시(조회 기간)">일</button>
+            <button type="button" data-u="week" title="월요일부터 일요일까지 한 주씩 묶어 표시(조회 기간)">주</button>
+            <button type="button" data-u="month" title="달마다 묶어 표시. 조회 기간이 6개월보다 짧으면 최근 24개월">월</button>
+            <button type="button" data-u="year" title="연도마다 묶어 표시. 조회 기간과 관계없이 최근 10년">연</button>
+          </div>
+        </div>
+        <span class="muted chart-note" id="chartNote"></span>
       </div>
       <div class="chart" id="chart"></div>
       <div class="tip" id="tip" hidden></div>

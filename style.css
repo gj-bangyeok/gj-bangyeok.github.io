@@ -359,7 +359,7 @@ button.row:hover { background: var(--surface-2); }
 .ring.home { border: 2px dashed var(--map-ink); background: transparent; }
 
 /* ---------- 지도와 막대그래프 ---------- */
-.center { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; min-width: 0; }
+.center { display: grid; grid-template-rows: minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr); min-height: 0; min-width: 0; }
 #map { min-height: 0; background: var(--prev-light); }
 .leaflet-container { font-family: var(--font); }
 .leaflet-tile-pane { filter: var(--tile-filter); }
@@ -404,7 +404,13 @@ button.row:hover { background: var(--surface-2); }
 }
 
 .chart-panel { position: relative; padding: 12px 20px 8px; background: var(--surface); color: var(--text); border-top: 1px solid var(--line); }
-.chart-panel .panel-head { margin-bottom: 4px; }
+.chart-panel .panel-head { margin-bottom: 4px; align-items: center; }
+.chart-head { display: flex; align-items: center; gap: 12px; flex: none; }
+.chart-head h2 { white-space: nowrap; }
+.unit-seg { flex: none; }
+.unit-seg button { flex: none; min-height: 22px; padding: 0 8px; }
+.chart-note { flex: 1 1 auto; min-width: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-note.warn { color: var(--watch); }
 .chart { height: 168px; }
 .chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .chart .grid { stroke: var(--line); stroke-width: 1; }
