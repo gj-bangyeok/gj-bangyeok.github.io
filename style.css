@@ -263,6 +263,8 @@ button { font: inherit; color: inherit; }
 .clock { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
 #clock { font-size: 26px; font-weight: 600; }
 #updated { color: var(--muted); font-size: var(--fs-meta); }
+#suppNote { color: var(--muted); font-size: 13px; cursor: help; }
+#suppNote[hidden] { display: none; }
 
 .notice { padding: 8px 24px; font-size: var(--fs-meta); background: var(--info-bg); color: var(--text-2); }
 .notice.warn { background: var(--watch-bg); color: var(--watch); }
@@ -502,6 +504,23 @@ button.row:hover { background: var(--surface-2); }
   white-space: nowrap;
 }
 .manual-key { flex: none; }
+/* 보도자료 보완 항목 */
+.row .t .ptag { vertical-align: 2px; }
+.ptag, .press-key {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px dashed var(--text-2);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.press-key { flex: none; }
+.leaflet-popup-content .ptag { vertical-align: 3px; }
+.psrc { margin-top: 4px; }
 .manual-btn {
   min-height: 40px;
   padding: 0 16px;

@@ -22,7 +22,7 @@
 
   var H = null;          // 받아 온 원본 자료
   var D = null;          // 집계용 열 배열 (수기 포함 여부에 따라 다시 만듦)
-  var state = { from: 0, to: 0, sido: '', sgg: '', dis: null, species: '', manual: false, dim: 'disease',
+  var state = { from: 0, to: 0, sido: '', sgg: '', dis: null, species: '', manual: false, press: true, dim: 'disease',
     crossRow: 'disease', crossCol: 'year', metric: 'n', sort: null, quick: null };
   var current = null;    // 마지막 집계 결과 (엑셀에 그대로 씀)
 
@@ -69,8 +69,11 @@
     } catch (e) { return []; }
   }
 
-  // 원본 + (선택 시) 수기 입력을 열 배열로 만든다
-  function buildData(withManual) {
+  // 보도자료 보완 행(공공데이터에 아직 없는 발생). 서버가 원본과 같은 열·사전으로 만들어 둔다.
+  function pressRows() { return H.supp && Array.isArray(H.supp.rows) ? H.supp.rows : []; }
+
+  // 원본 + (선택 시) 보도자료 보완 + (선택 시) 수기 입력을 열 배열로 만든다. 구분: 0 공공데이터, 1 수기, 2 보도자료
+  function buildData(withManual, withPress) {
     var dict = {};
     Object.keys(H.dict).forEach(function (k) { dict[k] = H.dict[k].slice(); });
     var idx = {};
@@ -81,7 +84,8 @@
       return i;
     }
     var man = withManual ? manualRows(id) : [];
-    var n = H.rows.length + man.length;
+    var press = withPress ? pressRows() : [];
+    var n = H.rows.length + press.length + man.length;
     var c = { n: n, date: new Int32Array(n), dis: new Uint16Array(n), sido: new Uint16Array(n), sgg: new Uint16Array(n),
       emd: new Uint16Array(n), sp: new Uint16Array(n), cnt: new Float64Array(n), ag: new Uint16Array(n), end: new Int32Array(n),
       manual: new Uint8Array(n), dict: dict };
@@ -90,7 +94,8 @@
       c.cnt[i] = r[6] == null ? NaN : r[6]; c.ag[i] = r[7]; c.end[i] = r[8] || 0; c.manual[i] = m;
     }
     H.rows.forEach(function (r, i) { put(i, r, 0); });
-    man.forEach(function (r, j) { put(H.rows.length + j, r, 1); });
+    press.forEach(function (r, j) { put(H.rows.length + j, r, 2); });
+    man.forEach(function (r, j) { put(H.rows.length + press.length + j, r, 1); });
     // 시군구는 같은 이름이 여러 시도에 있으므로(중구, 남구, 고성군 등) 시도와 묶어 키를 만든다
     var keyMap = new Map(), keys = [];
     c.sk = new Uint16Array(n);
@@ -148,11 +153,13 @@
 
   // ---------------------------------------------------------------- 조건 화면
   function init() {
-    D = buildData(false);
+    state.press = pressRows().length > 0;
+    D = buildData(false, state.press);
     var minD = H.rows.length ? H.rows[0][0] : 19950101;
     state.minDate = isoOfInt(minD);
     $('dataInfo').textContent = '자료 기준 ' + (H.updated || '').replace('T', ' ').slice(0, 16) + ' · 전체 ' + fmt(H.rows.length) +
-      '건(' + state.minDate.slice(0, 4) + '년~) · 겹쳐 실린 ' + fmt(H.merged) + '행은 한 건으로 묶음';
+      '건(' + state.minDate.slice(0, 4) + '년~) · 겹쳐 실린 ' + fmt(H.merged) + '행은 한 건으로 묶음' +
+      (pressRows().length ? ' · 공공데이터에 아직 없는 ' + fmt(pressRows().length) + '건은 농식품부 보도자료로 보완' : '');
 
     // 시도 목록
     var sel = $('sido');
@@ -205,12 +212,24 @@
     $('manual').disabled = !mcount;
     $('manual').addEventListener('change', function () {
       state.manual = $('manual').checked;
-      D = buildData(state.manual);
+      D = buildData(state.manual, state.press);
       var keep = state.dis;
       buildDiseaseList();
       // 수기에만 있는 질병은 새로 켠다
       state.dis = new Set(Array.from(keep).concat(D.dict.disease.filter(function (d) { return !H.dict.disease.includes(d); })));
       syncDiseaseChecks();
+      fillSpecies();
+      update();
+    });
+
+    // 보도자료 보완
+    var pcount = pressRows().length;
+    $('pressCount').textContent = pcount ? '(' + pcount + '건)' : '(없음)';
+    $('press').checked = state.press;
+    $('press').disabled = !pcount;
+    $('press').addEventListener('change', function () {
+      state.press = $('press').checked;
+      D = buildData(state.manual, state.press);
       fillSpecies();
       update();
     });
@@ -492,6 +511,7 @@
     idx.forEach(function (i) { var c = D.cnt[i]; if (c === c) heads += c; else missing++; });
     current.heads = heads;
     current.missing = missing;
+    current.pressN = idx.filter(function (i) { return D.manual[i] === 2; }).length;
 
     $('sumN').textContent = fmt(idx.length) + '건';
     $('sumHeads').textContent = fmt(heads) + '두';
@@ -511,7 +531,7 @@
   }
   function condText() {
     return isoOfInt(state.from) + ' ~ ' + isoOfInt(state.to) + ' · ' + regionLabel() + ' · ' + diseaseLabel() + ' · ' + speciesLabel() +
-      (state.manual ? ' · 수기 입력 포함' : '');
+      (state.manual ? ' · 수기 입력 포함' : '') + (state.press && pressRows().length ? ' · 보도자료 보완 포함' : '');
   }
   function dimText() {
     if (state.dim !== 'cross') return DIM_LABEL[state.dim];
@@ -641,7 +661,7 @@
   function rawRow(i) {
     var d = D.dict, sk = D.sgKeys[D.sk[i]], c = D.cnt[i];
     return [isoOfInt(D.date[i]), d.disease[D.dis[i]], sk.sido, sk.sgg, d.emd[D.emd[i]], d.species[D.sp[i]],
-      c === c ? c : null, d.agency[D.ag[i]], isoOfInt(D.end[i]), D.manual[i] ? '수기' : '공공데이터'];
+      c === c ? c : null, d.agency[D.ag[i]], isoOfInt(D.end[i]), D.manual[i] === 1 ? '수기' : D.manual[i] === 2 ? '보도자료' : '공공데이터'];
   }
   function drawRaw(idx) {
     var wrap = $('rawWrap');
@@ -659,7 +679,11 @@
       var r = rawRow(idx[j]), row = el('tr');
       r.forEach(function (v, c) {
         var td = el('td', c === 6 ? 'num' : c >= 7 ? 'sub' : null);
-        if (c === 9) { if (v === '수기') td.appendChild(el('span', 'mtag', '수기')); else td.textContent = '공공'; }
+        if (c === 9) {
+          if (v === '수기') td.appendChild(el('span', 'mtag', '수기'));
+          else if (v === '보도자료') { var pt = td.appendChild(el('span', 'ptag', '보도')); pt.title = '농림축산식품부 보도자료로 보완(공공데이터에 아직 없음)'; }
+          else td.textContent = '공공';
+        }
         else td.textContent = c === 6 ? fmt(v) : (v || '');
         row.appendChild(td);
       });
@@ -682,11 +706,15 @@
       ['축종', speciesLabel()],
       ['집계 기준', dimText()],
       ['수기 입력', state.manual ? '포함(이 PC의 브라우저에 저장된 항목)' : '제외'],
+      ['보도자료 보완', !pressRows().length ? '없음' : state.press ?
+        '포함: 공공데이터에 아직 없는 ' + fmt(pressRows().length) + '건(이 조건에 ' + fmt(current.pressN) + '건). 원자료 시트 "구분" 열이 "보도자료"인 행' :
+        '제외(공공데이터에 아직 없는 ' + fmt(pressRows().length) + '건이 있으나 빼고 집계)'],
       ['발생 건수', fmt(idx.length) + '건'],
       ['발생 두수 합계', fmt(current.heads) + '두'],
       ['두수 미기재', fmt(current.missing) + '건(두수 합계에서 0으로 셈)'],
       ['자료 기준 시각', (H.updated || '').replace('T', ' ')],
-      ['출처', '농림축산검역본부 가축질병 발생정보'],
+      ['출처', '농림축산검역본부 가축질병 발생정보' + (state.press && pressRows().length ?
+        ' + ' + ((H.supp && H.supp.source) || '농림축산식품부 보도자료') + '(공공데이터에 같은 건이 들어오면 보완 항목은 자동으로 빠짐)' : '')],
       ['중복 처리', '같은 농장·같은 날·같은 질병으로 겹쳐 실린 행은 한 건으로 묶음(전체 자료에서 ' + fmt(H.merged) + '행)'],
       ['지역 표기', '시도는 현재 이름으로 통일, 일반구는 시로 합침, 전남광주통합특별시 주소는 광주광역시·전라남도로 나눔'],
       ['만든 시각', new Date().toLocaleString('ko-KR')]

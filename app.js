@@ -495,18 +495,42 @@
   function popup(it) {
     var box = el('div');
     box.appendChild(el('b', null, it.disease));
+    var press = it.source === 'press';
+    if (press) { box.appendChild(document.createTextNode(' ')); box.appendChild(el('span', 'ptag', '보도자료')); }
     var lines = [
-      '발생일 ' + it.date + (it.end ? ', 종식 ' + it.end : ''),
+      (press ? '확진일 ' : '발생일 ') + it.date + (it.end ? ', 종식 ' + it.end : ''),
       it.addr,
+      press ? pressHeads(it) :
       it.species ? it.species + (Number(it.count) > 0 ? ' ' + Number(it.count).toLocaleString('ko-KR') + '마리' : '') : '',
       it.farm ? '농장 ' + it.farm : '',
       it.km != null ? '시청에서 ' + fmtKm(it.km) : '',
       it.geo === 'area' ? '읍면동 중심 좌표라 실제 위치와 다를 수 있습니다' : '',
+      it.geo === 'sgg' ? '보도자료에 시군구까지만 나와 시군구 중심에 표시했습니다' : '',
+      press && it.note ? it.note : '',
       it.source === 'manual' ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
       it.memo ? '메모: ' + it.memo : ''
     ];
     lines.filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
+    if (press) {
+      var src = el('div', 'psrc', '출처: ');
+      if (it.url) {
+        var a = el('a', null, it.source_name || '농림축산식품부 보도자료');
+        a.href = it.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        src.appendChild(a);
+      } else src.appendChild(document.createTextNode(it.source_name || '농림축산식품부 보도자료'));
+      src.appendChild(document.createTextNode(' (공공데이터에 아직 없음)'));
+      box.appendChild(src);
+    }
     return box;
+  }
+
+  // 보도자료 보완 항목의 두수 문구: 공개된 값만 씀
+  function pressHeads(it) {
+    var p = [];
+    if (it.species) p.push(it.species);
+    if (Number(it.herd) > 0) p.push('사육 ' + Number(it.herd).toLocaleString('ko-KR') + '마리');
+    if (Number(it.count) > 0) p.push('양성 ' + Number(it.count).toLocaleString('ko-KR') + '마리');
+    return p.length ? p.join(', ') : '축종·두수 확인 안 됨';
   }
 
   function drawMap(shown) {
@@ -569,7 +593,8 @@
         throw new Error(h && h.error ? h.error : '자료 형식이 올바르지 않습니다');
       }
       var gs = h.dict.disease.map(groupOf), rows = [];
-      h.rows.forEach(function (r) {
+      var supp = h.supp && Array.isArray(h.supp.rows) ? h.supp.rows : [];
+      h.rows.concat(supp).forEach(function (r) {
         var s = String(r[di]);
         if (s.length === 8 && gs[r[ni]]) rows.push({ date: s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8), g: gs[r[ni]] });
       });
@@ -826,6 +851,12 @@
     r.appendChild(shapeIcon(it.g, 18));
     var t = el('span', 't', label(it));
     if (it.source === 'manual') { t.appendChild(document.createTextNode(' ')); t.appendChild(el('span', 'mtag', '수기')); }
+    if (it.source === 'press') {
+      t.appendChild(document.createTextNode(' '));
+      var pt = el('span', 'ptag', '보도');
+      pt.title = (it.source_name || '농림축산식품부 보도자료') + '로 보완한 항목입니다(공공데이터에 아직 없음)';
+      t.appendChild(pt);
+    }
     r.appendChild(t);
     r.appendChild(right);
     var a = el('span', 'a');
@@ -942,6 +973,15 @@
     syncRangeInputs(cur);
     renderRangeNote(cur);
     $('source').textContent = data.source ? '자료: ' + data.source : '';
+    var sp = data.supplement, sn = $('suppNote');
+    if (sp && sp.count > 0) {
+      var sline = '공공데이터에 아직 없는 ' + sp.count + '건은 농식품부 보도자료로 보완';
+      $('source').textContent += ' · ' + sline + '(목록과 지도에 "보도" 표시)';
+      sn.textContent = sline;
+      sn.title = Object.keys(sp.by_disease || {}).map(function (k) { return k + ' ' + sp.by_disease[k] + '건'; }).join(', ') +
+        '\n출처: ' + (sp.source || '농림축산식품부 보도자료') + '. 같은 건이 공공데이터에 들어오면 자동으로 빠집니다.';
+      sn.hidden = false;
+    } else { sn.hidden = true; sn.textContent = ''; }
 
     // 안내 띠
     var notice = $('notice'), msg = '', cls = 'notice';
@@ -1123,7 +1163,7 @@
   }
   // 같은 질병, 발생일 ±3일, 3km 이내 또는 같은 읍면동의 API 건이 있으면 표시만 한다(자동 삭제 없음)
   function markApiMatch(all) {
-    var api = all.filter(function (it) { return it.source !== 'manual'; });
+    var api = all.filter(function (it) { return it.source !== 'manual' && it.source !== 'press'; });
     all.forEach(function (m) {
       if (m.source !== 'manual') return;
       var a0 = areaOf(m.addr), t0 = new Date(m.date + 'T00:00:00').getTime();
