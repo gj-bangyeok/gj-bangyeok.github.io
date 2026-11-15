@@ -270,6 +270,20 @@ button { font: inherit; color: inherit; }
 .notice.warn { background: var(--watch-bg); color: var(--watch); }
 .notice.err { background: var(--alert-bg); color: var(--alert); }
 
+/* 보도자료 대조 감시 */
+#checkOk { color: var(--muted); font-size: 13px; cursor: help; }
+#checkOk[hidden], .check-note[hidden] { display: none; }
+.check-note { display: flex; flex-direction: column; gap: 4px; }
+.check-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.check-row b { font-weight: 700; }
+.check-row a { color: inherit; text-decoration: underline; }
+.check-row button {
+  font: inherit; font-size: 13px; padding: 1px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid currentColor; background: transparent; color: inherit;
+}
+.check-row button:hover { background: rgba(0, 0, 0, .06); }
+.check-row .check-sub { opacity: .8; font-weight: 400; }
+
 /* ---------- 본문 3단 ---------- */
 .board {
   flex: 1;

@@ -982,6 +982,7 @@
         '\n출처: ' + (sp.source || '농림축산식품부 보도자료') + '. 같은 건이 공공데이터에 들어오면 자동으로 빠집니다.';
       sn.hidden = false;
     } else { sn.hidden = true; sn.textContent = ''; }
+    renderCheck(data.mode === 'live' ? data.check : null);
 
     // 안내 띠
     var notice = $('notice'), msg = '', cls = 'notice';
@@ -1179,6 +1180,61 @@
 
   function form() { return $('manualForm'); }
 
+  // ---------- 보도자료 대조 감시 (서버의 data/check.json 요약) ----------
+  // 농식품부 보도자료의 누적 발표 건수와 현황판 건수가 다르면 위쪽 띠에 경고, 같으면 갱신 시각 아래에 작게 표시.
+  var CHECK_STALE_MS = 2 * 24 * 3600 * 1000;
+  function stamp(iso) { return iso ? shortDate(iso.slice(0, 10)) + ' ' + iso.slice(11, 16) : ''; }
+  function renderCheck(c) {
+    var box = $('checkNote'), small = $('checkOk');
+    box.textContent = ''; small.textContent = '';
+    if (!c || !c.items) { box.hidden = true; small.hidden = true; return; }
+    var miss = c.items.filter(function (it) { return it.status === 'missing'; });
+    var stale = !c.last_ok || Date.now() - new Date(c.last_ok).getTime() > CHECK_STALE_MS;
+    var failed = c.status === 'fail' || stale;
+    var detail = c.items.map(function (it) {
+      var p = it.kind === 'season' ? "'" + it.period.slice(2, 4) + "/'" + it.period.slice(5) + ' 동절기' : it.period + '년';
+      return it.label + ' ' + p + ': ' + (it.press == null ? '발표 누적 없음' : '발표 ' + it.press + '건(' + shortDate(it.press_date) + ' 보도자료)') +
+        ', 현황판 ' + it.ours_total + '건';
+    }).join('\n') + '\n농식품부 보도자료의 누적 문구와 비교합니다. 하루 4번 확인합니다.';
+    miss.forEach(function (it) {
+      var row = el('div', 'check-row');
+      var t = el('span', null, '');
+      t.appendChild(el('b', null, '자료 점검: '));
+      t.appendChild(document.createTextNode(it.label + ' 발표 ' + it.press + '건, 현황판 ' + it.ours + '건. ' + it.missing + '건 미반영'));
+      t.appendChild(el('span', 'check-sub', ' (' + shortDate(it.press_date) + ' 보도자료 기준)'));
+      row.appendChild(t);
+      if (it.url) {
+        var a = el('a', null, '보도자료 보기');
+        a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
+        a.title = it.title || '';
+        row.appendChild(a);
+      }
+      var b = el('button', null, '발생 입력');
+      b.type = 'button';
+      b.setAttribute('data-disease', it.key);
+      b.title = '빠진 발생을 이 PC에 직접 입력합니다';
+      row.appendChild(b);
+      box.appendChild(row);
+    });
+    if (failed) {
+      var fr = el('div', 'check-row');
+      fr.appendChild(el('b', null, '대조 실패: '));
+      fr.appendChild(document.createTextNode(
+        (c.status === 'fail' ? '농식품부 보도자료를 읽지 못했습니다(' + stamp(c.checked) + '). ' : '보도자료 대조가 오래 멈춰 있습니다. ') +
+        (c.last_ok ? '마지막 대조 ' + stamp(c.last_ok) + '.' : '아직 대조한 적이 없습니다.')));
+      fr.title = c.error || '';
+      box.appendChild(fr);
+    }
+    box.hidden = !box.childNodes.length;
+    box.className = 'notice check-note' + (miss.length || failed ? ' warn' : '');
+    box.title = detail;
+    if (!miss.length && !failed) {
+      small.textContent = '마지막 대조 ' + stamp(c.last_ok) + ', 발표와 일치';
+      small.title = detail;
+      small.hidden = false;
+    } else small.hidden = true;
+  }
+
   function setupManual() {
     storeLoad();
     $('storeWarn').hidden = state.storeOk;
@@ -1188,6 +1244,14 @@
       b.addEventListener('click', function () { $('manualDlg').close(); });
     });
     $('manualBtn').addEventListener('click', function () { openDialog(null); });
+    // 보도자료 대조 경고의 "발생 입력" 단추: 그 질병을 골라 둔 입력 창을 연다
+    $('checkNote').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-disease]');
+      if (!b) return;
+      openDialog(null);
+      form().elements.disease_key.value = b.getAttribute('data-disease');
+      syncEtc();
+    });
     $('dlgNew').addEventListener('click', function () { openDialog(null); });
     $('pickBtn').addEventListener('click', startPick);
     $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); });
