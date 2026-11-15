@@ -1188,19 +1188,36 @@
     var box = $('checkNote'), small = $('checkOk');
     box.textContent = ''; small.textContent = '';
     if (!c || !c.items) { box.hidden = true; small.hidden = true; return; }
-    var miss = c.items.filter(function (it) { return it.status === 'missing'; });
+    // 이 PC의 수기 입력은 서버가 모르므로 화면에서 더해 본다(같은 질병, 같은 기간, 보도자료 다음 날까지)
+    function manualIn(it) {
+      var y = parseInt(it.period, 10), from, to;
+      if (it.kind === 'season') { from = y + '-09-01'; to = (y + 1) + '-08-31'; }
+      else { from = y + '-01-01'; to = y + '-12-31'; }
+      var d = new Date(it.press_date + 'T00:00:00'); d.setDate(d.getDate() + 1);
+      var upto = isoOf(d) < to ? isoOf(d) : to;
+      return state.manual.filter(function (m) { return m.disease_key === it.key && m.date >= from && m.date <= upto; }).length;
+    }
+    var items = c.items.map(function (it0) {  // 서버 값은 그대로 두고 사본에 더한다(다시 그릴 때 겹쳐 더하지 않게)
+      var it = {}; Object.keys(it0).forEach(function (k) { it[k] = it0[k]; });
+      it.manual = it.press == null ? 0 : manualIn(it);
+      if (it.status === 'missing' && it.ours + it.manual >= it.press) it.status = 'ok';
+      else if (it.status === 'missing') it.missing = it.press - it.ours - it.manual;
+      return it;
+    });
+    var miss = items.filter(function (it) { return it.status === 'missing'; });
     var stale = !c.last_ok || Date.now() - new Date(c.last_ok).getTime() > CHECK_STALE_MS;
     var failed = c.status === 'fail' || stale;
-    var detail = c.items.map(function (it) {
+    var detail = items.map(function (it) {
       var p = it.kind === 'season' ? "'" + it.period.slice(2, 4) + "/'" + it.period.slice(5) + ' 동절기' : it.period + '년';
       return it.label + ' ' + p + ': ' + (it.press == null ? '발표 누적 없음' : '발표 ' + it.press + '건(' + shortDate(it.press_date) + ' 보도자료)') +
-        ', 현황판 ' + it.ours_total + '건';
+        ', 현황판 ' + it.ours_total + '건' + (it.manual ? '(이 PC 수기 ' + it.manual + '건 별도)' : '');
     }).join('\n') + '\n농식품부 보도자료의 누적 문구와 비교합니다. 하루 4번 확인합니다.';
     miss.forEach(function (it) {
       var row = el('div', 'check-row');
       var t = el('span', null, '');
       t.appendChild(el('b', null, '자료 점검: '));
-      t.appendChild(document.createTextNode(it.label + ' 발표 ' + it.press + '건, 현황판 ' + it.ours + '건. ' + it.missing + '건 미반영'));
+      t.appendChild(document.createTextNode(it.label + ' 발표 ' + it.press + '건, 현황판 ' + it.ours + '건' +
+        (it.manual ? '(+이 PC 수기 ' + it.manual + '건)' : '') + '. ' + it.missing + '건 미반영'));
       t.appendChild(el('span', 'check-sub', ' (' + shortDate(it.press_date) + ' 보도자료 기준)'));
       row.appendChild(t);
       if (it.url) {
