@@ -356,6 +356,7 @@ button.row:hover { background: var(--surface-2); }
   transition: background-color var(--dur) var(--ease);
 }
 .manual-btn:hover { background: var(--surface-3); }
+.nav-link { display: inline-flex; align-items: center; text-decoration: none; }
 .ghost {
   min-height: 36px;
   padding: 0 12px;

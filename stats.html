@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="가축 전염병 발생 통계: 기간·지역·질병별 집계와 엑셀 내려받기">
+<title>가축질병 발생 통계</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="stats.css">
+<link rel="icon" href="data:,">
+</head>
+<body class="stats-page">
+<header class="top">
+  <div class="st-title">
+    <h1>가축질병 발생 통계</h1>
+    <p class="subline" id="dataInfo">자료를 불러오는 중입니다</p>
+  </div>
+  <nav class="controls">
+    <a class="manual-btn nav-link" href="./">현황판</a>
+  </nav>
+</header>
+
+<div id="notice" class="notice" role="status" hidden></div>
+
+<main class="st-main">
+  <aside class="st-filters" aria-label="조건">
+    <section class="st-group">
+      <h2>기간</h2>
+      <div class="st-dates">
+        <label><span>시작일</span><input type="date" id="from"></label>
+        <span class="st-tilde" aria-hidden="true">~</span>
+        <label><span>종료일</span><input type="date" id="to"></label>
+      </div>
+      <div class="chips" id="quickDates" role="group" aria-label="빠른 기간 선택">
+        <button type="button" data-q="30d">최근 30일</button>
+        <button type="button" data-q="thisYear">올해</button>
+        <button type="button" data-q="lastYear">작년</button>
+        <button type="button" data-q="5y">최근 5년</button>
+        <button type="button" data-q="all">전체</button>
+      </div>
+    </section>
+
+    <section class="st-group">
+      <h2>지역</h2>
+      <div class="chips" id="quickRegion" role="group" aria-label="빠른 지역 선택">
+        <button type="button" data-r="all">전국</button>
+        <button type="button" data-r="sido">경상북도</button>
+        <button type="button" data-r="home">경주시</button>
+      </div>
+      <label class="st-field"><span>시도</span><select id="sido"></select></label>
+      <label class="st-field"><span>시군구</span><select id="sgg"></select></label>
+    </section>
+
+    <section class="st-group">
+      <div class="st-head">
+        <h2>질병</h2>
+        <span class="muted" id="disCount"></span>
+      </div>
+      <div class="chips" id="disPresets" role="group" aria-label="질병 묶음">
+        <button type="button" data-p="major">주요 6종</button>
+        <button type="button" data-p="disaster">재난형 4종</button>
+        <button type="button" data-p="all">모두</button>
+        <button type="button" data-p="none">해제</button>
+      </div>
+      <ul class="dis-list" id="disList"></ul>
+    </section>
+
+    <section class="st-group">
+      <h2>축종</h2>
+      <label class="st-field"><span class="sr">축종</span><select id="species"></select></label>
+    </section>
+
+    <section class="st-group">
+      <label class="st-check"><input type="checkbox" id="manual"> 수기 입력 포함 <span class="muted" id="manualCount"></span></label>
+      <p class="hint">수기 입력은 이 PC의 브라우저에 저장된 항목입니다. 기본은 제외합니다.</p>
+    </section>
+  </aside>
+
+  <section class="st-body">
+    <div class="st-summary" id="summary">
+      <div class="sum"><span class="k">발생 건수</span><b id="sumN">–</b></div>
+      <div class="sum"><span class="k">발생 두수 합계</span><b id="sumHeads">–</b></div>
+      <div class="sum wide"><span class="k">조건</span><span id="sumCond" class="cond">–</span></div>
+    </div>
+
+    <div class="st-toolbar">
+      <label class="st-field inline"><span>집계 기준</span>
+        <select id="dim">
+          <option value="disease">질병별</option>
+          <option value="sido">시도별</option>
+          <option value="sgg">시군구별</option>
+          <option value="emd">읍면동별</option>
+          <option value="year">연도별</option>
+          <option value="ym">월별 (연-월)</option>
+          <option value="month">달별 계절성 (1~12월 합계)</option>
+          <option value="spg">축종별 (소·돼지·닭 등)</option>
+          <option value="sp">축종별 (세부)</option>
+          <option value="cross">교차표</option>
+        </select>
+      </label>
+      <span id="crossOpts" class="cross-opts" hidden>
+        <label class="st-field inline"><span>행</span>
+          <select id="crossRow">
+            <option value="disease">질병</option>
+            <option value="sido">시도</option>
+            <option value="sgg">시군구</option>
+          </select>
+        </label>
+        <label class="st-field inline"><span>열</span>
+          <select id="crossCol">
+            <option value="year">연도</option>
+            <option value="month">월 (1~12월)</option>
+          </select>
+        </label>
+      </span>
+      <div class="periods" id="metric" role="group" aria-label="그래프와 교차표 값">
+        <button type="button" data-m="n">건수</button>
+        <button type="button" data-m="heads">두수</button>
+      </div>
+      <button type="button" class="primary xl-btn" id="xlsxBtn" disabled>엑셀 내려받기</button>
+    </div>
+
+    <section class="st-card">
+      <div class="st-head">
+        <h2 id="chartTitle">그래프</h2>
+        <span class="muted" id="chartNote"></span>
+      </div>
+      <div id="chart" class="st-chart"></div>
+    </section>
+
+    <section class="st-card">
+      <div class="st-head">
+        <h2 id="tableTitle">집계표</h2>
+        <span class="muted">열 머리를 누르면 정렬합니다</span>
+      </div>
+      <div class="table-wrap" id="tableWrap"></div>
+    </section>
+
+    <section class="st-card">
+      <div class="st-head">
+        <h2>원자료</h2>
+        <span class="muted" id="rawNote"></span>
+      </div>
+      <div class="table-wrap raw" id="rawWrap"></div>
+    </section>
+
+    <footer class="st-foot hint" id="foot">
+      출처: 농림축산검역본부 가축질병 발생정보. 같은 농장·같은 날·같은 질병으로 겹쳐 실린 행은 한 건으로 묶어 셉니다(먼저 실린 행의 축종·두수 사용).
+      시도는 현재 이름으로 통일했습니다(강원도→강원특별자치도, 전라북도→전북특별자치도, 군위군→대구광역시, 옛 시군→통합 시). 전남광주통합특별시 주소는 비교를 위해 광주광역시·전라남도로 나눴습니다.
+      일반구는 시로 합칩니다(예: 포항시 남구→포항시). 두수가 비어 있는 행은 두수 합계에서 0으로 셉니다. 농장명은 담지 않습니다.
+    </footer>
+  </section>
+</main>
+
+<script src="xlsx.js"></script>
+<script src="stats.js"></script>
+</body>
+</html>
