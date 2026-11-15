@@ -21,7 +21,8 @@
   var STALE_MS = 3 * 60 * 60 * 1000;
   var SVGNS = 'http://www.w3.org/2000/svg';
 
-  var state = { days: 30, shown: {}, data: null, map: null, layer: null, markers: {} };
+  var state = { days: 30, shown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
+    writable: false, manual: [], editId: null, pick: null, picking: false };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
@@ -78,6 +79,14 @@
     return box;
   }
 
+  // 거점소독시설 표지: 질병 표지와 겹치지 않게 테두리 있는 사각형 안의 십자
+  function facIcon(size) {
+    var s = size, box = svg('svg', { width: s, height: s, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
+    box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: token('--fac'), 'stroke-width': 2 }));
+    box.appendChild(svg('path', { d: 'M11 6v10M6 11h10', stroke: token('--fac'), 'stroke-width': 2.6, 'stroke-linecap': 'round' }));
+    return box;
+  }
+
   function today0() { var t = new Date(); t.setHours(0, 0, 0, 0); return t; }
   function daysAgo(iso) { return Math.round((today0() - new Date(iso + 'T00:00:00')) / 86400000); }
   function km(a, b, c, d) {
@@ -115,7 +124,42 @@
       icon: L.divIcon({ className: '', html: pin, iconSize: null, iconAnchor: [0, 0] }),
       interactive: false, zIndexOffset: 2000, keyboard: false
     }).addTo(state.map);
+    state.facLayer = L.layerGroup().addTo(state.map);
     state.layer = L.layerGroup().addTo(state.map);
+    state.map.on('click', function (e) { if (state.picking) finishPick(e.latlng); });
+  }
+
+  function drawResources(res) {
+    var fac = (res && res.facilities) || [], veh = (res && res.vehicles) || [];
+    state.facLayer.clearLayers();
+    fac.forEach(function (f) {
+      if (f.lat == null || f.lng == null) return;
+      var icon = facIcon(24);
+      icon.setAttribute('class', 'mk');
+      var box = el('div');
+      box.appendChild(el('b', null, f.name));
+      box.appendChild(el('div', null, f.addr));
+      if (f.geo === 'road') box.appendChild(el('div', null, '도로 위치 기준이라 실제 건물과 조금 다를 수 있습니다'));
+      L.marker([f.lat, f.lng], {
+        icon: L.divIcon({ className: '', html: icon, iconSize: [24, 24], iconAnchor: [12, 12] }),
+        zIndexOffset: 1500, title: f.name, alt: f.name
+      }).bindPopup(box).addTo(state.facLayer);
+    });
+    var parts = [];
+    if (fac.length) {
+      var unloc = fac.filter(function (f) { return f.lat == null; }).length;
+      parts.push('거점소독시설 ' + fac.length + '곳' + (unloc ? ' (' + unloc + '곳 위치 미확인)' : ''));
+    }
+    if (veh.length) {
+      parts.push('소독차량 ' + veh.map(function (v) {
+        return v.name.replace('경주시 소유', '시').replace('축협 공동방제단', '공동방제단') + '\u00a0' + v.count + '대';
+      }).join(' · '));
+    }
+    $('resPanel').hidden = !parts.length;
+    $('resLine').textContent = parts.join(', ');
+    $('resLine').title = fac.map(function (f) { return f.name + ': ' + f.addr; }).concat(
+      veh.map(function (v) { return v.name + ' ' + v.count + '대'; })).join('\n');
+    $('facLegend').hidden = !fac.some(function (f) { return f.lat != null; });
   }
 
   function popup(it) {
@@ -127,7 +171,9 @@
       it.species ? it.species + (Number(it.count) > 0 ? ' ' + Number(it.count).toLocaleString('ko-KR') + '마리' : '') : '',
       it.farm ? '농장 ' + it.farm : '',
       it.km != null ? '시청에서 ' + fmtKm(it.km) : '',
-      it.geo === 'area' ? '읍면동 중심 좌표라 실제 위치와 다를 수 있습니다' : ''
+      it.geo === 'area' ? '읍면동 중심 좌표라 실제 위치와 다를 수 있습니다' : '',
+      it.geo === 'manual' ? '담당자가 지도에서 찍은 위치입니다' : '',
+      it.source === 'manual' ? '수기 입력 (공공데이터 반영 전)' + (it.memo ? ': ' + it.memo : '') : ''
     ];
     lines.filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
     return box;
@@ -283,7 +329,7 @@
   // 주요 질병은 왼쪽 목록과 같은 짧은 이름으로, 나머지는 원래 질병명으로 보인다
   function label(it) { return it.g.core ? it.g.name : it.disease; }
 
-  function row(it, right, parts, side) {
+  function row(it, right, parts, side, withActions) {
     var li = el('li');
     var hasPos = state.markers[it.id] != null;
     var r = el(hasPos ? 'button' : 'div', 'row');
@@ -303,7 +349,22 @@
       });
     }
     li.appendChild(r);
+    if (it.source === 'manual' && state.writable && withActions) li.appendChild(manualActions(it));
     return li;
+  }
+
+  function manualActions(it) {
+    var box = el('div', 'mact');
+    if (it.api_match) box.appendChild(el('span', 'tag', 'API 반영됨, 수기 삭제 권장'));
+    var e = el('button', 'ghost sm', '수정');
+    e.type = 'button';
+    e.addEventListener('click', function () { openDialog(it.id); });
+    var d = el('button', 'ghost sm danger', '삭제');
+    d.type = 'button';
+    d.addEventListener('click', function () { removeManual(it.id, it.disease + ' ' + it.addr); });
+    box.appendChild(e);
+    box.appendChild(d);
+    return box;
   }
 
   // ---------------------------------------------------------------- 상단 상황 문장
@@ -392,6 +453,7 @@
     if (data.error) { msg = data.error; cls += ' err'; }
     else if (data.mode === 'demo') { msg = data.message || '가상 데이터로 표시 중입니다. 실제 발생 정보가 아닙니다.'; cls += ' warn'; }
     else if (age > STALE_MS) { msg = '자료가 ' + Math.floor(age / 3600000) + '시간 전에 마지막으로 갱신되었습니다. 서버 상태를 확인해 주세요.'; cls += ' warn'; }
+    else if (state.flash && state.flash.until > Date.now()) { msg = state.flash.msg; }
     else if (data.message) { msg = data.message; }
     notice.hidden = !msg;
     notice.className = cls;
@@ -431,7 +493,8 @@
     recent.textContent = '';
     shown.slice(0, 40).forEach(function (it) {
       var tag = it.lat == null ? el('span', 'tag', '위치 미확인') : null;
-      recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [it.addr, it.species, tag]));
+      var mtag = it.source === 'manual' ? el('span', 'mtag', '수기') : null;
+      recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [mtag, it.addr, it.species, tag], null, true));
     });
     $('recentCount').textContent = shown.length > 40 ? shown.length + '건 중 40건' : shown.length + '건';
     if (!shown.length) recent.appendChild(el('li', 'empty', '선택한 기간과 질병에 해당하는 발생이 없습니다'));
@@ -447,8 +510,8 @@
     var core = items.filter(function (it) { return it.g.core && it.km != null; }).sort(function (a, b) { return a.km - b.km; });
     var near = $('nearest');
     near.textContent = '';
-    core.slice(0, 5).forEach(function (it) {
-      near.appendChild(row(it, el('span', 'km', fmtKm(it.km)), [it.addr], shortDate(it.date)));
+    core.slice(0, 4).forEach(function (it) {
+      near.appendChild(row(it, el('span', 'km', fmtKm(it.km)), [it.source === 'manual' ? el('span', 'mtag', '수기') : null, it.addr], shortDate(it.date)));
     });
     if (!core.length) {
       var anyCore = items.some(function (it) { return it.g.core; });
@@ -457,14 +520,193 @@
         : '선택한 기간에 주요 질병 발생이 없습니다'));
     }
 
+    drawResources(data.resources);
+    if (state.writable) renderManualList();
+
     var unloc = items.filter(function (it) { return it.lat == null; }).length;
     $('unlocated').textContent = unloc ? '위치를 아직 찾지 못한 ' + unloc + '건은 지도에서 빠지고 목록에만 나옵니다.' : '';
   }
 
+  // ---------------------------------------------------------------- 수기 입력 (이 컴퓨터의 화면에서만)
+  var SIDO = ['서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시', '대전광역시', '울산광역시',
+    '세종특별자치시', '경기도', '강원특별자치도', '충청북도', '충청남도', '전북특별자치도', '전라남도',
+    '경상북도', '경상남도', '제주특별자치도'];
+  var KEY_OF = { '구제역': 'fmd', '고병원성조류인플루엔자': 'hpai', '아프리카돼지열병': 'asf', '럼피스킨병': 'lsd', '결핵병': 'tb', '브루셀라병': 'bru' };
+  var LOCAL = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+
+  function initManual() {
+    if (!LOCAL) return; // 공개본(깃허브 페이지)에서는 입력 기능을 아예 켜지 않음
+    fetch('api/status', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (st) {
+        if (st.writable !== true) return;
+        state.writable = true;
+        setupDialog();
+        $('manualBtn').hidden = false;
+        loadManual();
+      })
+      .catch(function () { /* 상태를 못 받으면 조회 전용 */ });
+  }
+
+  function loadManual() {
+    return fetch('api/manual', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { state.manual = j.items || []; renderManualList(); if (state.data) render(); })
+      .catch(function () { /* 다음에 다시 */ });
+  }
+
+  function form() { return $('manualForm'); }
+  function fval(name) { return form().elements[name].value; }
+
+  function setupDialog() {
+    var sel = form().elements.sido;
+    SIDO.forEach(function (n) { var o = el('option', null, n); o.value = n; sel.appendChild(o); });
+    form().elements.disease_key.addEventListener('change', syncEtc);
+    form().addEventListener('submit', function (e) { e.preventDefault(); submitManual(); });
+    Array.prototype.forEach.call($('manualDlg').querySelectorAll('[data-close]'), function (b) {
+      b.addEventListener('click', function () { $('manualDlg').close(); });
+    });
+    $('manualBtn').addEventListener('click', function () { openDialog(null); });
+    $('dlgNew').addEventListener('click', function () { openDialog(null); });
+    $('pickBtn').addEventListener('click', startPick);
+    $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.picking) cancelPick(); });
+  }
+
+  function syncEtc() { $('etcWrap').hidden = fval('disease_key') !== 'etc'; }
+  function syncPick() {
+    var p = state.pick;
+    $('pickText').textContent = p
+      ? '지도에서 찍은 위치: ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
+      : '위치는 주소로 찾습니다. 못 찾으면 위치 미확인으로 두고, 지도에서 직접 찍을 수 있습니다.';
+    $('pickClear').hidden = !p;
+  }
+
+  function openDialog(id) {
+    var f = form(), it = id ? state.manual.filter(function (x) { return x.id === id; })[0] : null;
+    f.reset();
+    state.editId = it ? it.id : null;
+    state.pick = it && it.geo === 'manual' ? { lat: it.lat, lng: it.lng } : null;
+    $('dlgTitle').textContent = it ? '수기 입력 수정' : '발생 수기 입력';
+    $('dlgSave').textContent = it ? '고친 내용 저장' : '저장';
+    $('dlgNew').hidden = !it;
+    $('dlgErr').textContent = '';
+    if (it) {
+      ['disease_key', 'date', 'sido', 'sigungu', 'emd', 'ri', 'species', 'memo'].forEach(function (k) { f.elements[k].value = it[k] || ''; });
+      f.elements.disease_text.value = it.disease_key === 'etc' ? it.disease : '';
+      f.elements.end.value = it.end || '';
+      f.elements.count.value = it.count == null ? '' : it.count;
+    } else {
+      f.elements.date.value = isoOf(new Date());
+      f.elements.sido.value = (state.data && state.data.home.region) || '경상북도';
+      f.elements.sigungu.value = (state.data && state.data.home.name) || '';
+    }
+    f.elements.date.max = isoOf(new Date());
+    f.elements.end.max = isoOf(new Date());
+    syncEtc();
+    syncPick();
+    renderManualList();
+    if (!$('manualDlg').open) $('manualDlg').showModal();
+  }
+
+  function startPick() {
+    state.picking = true;
+    $('manualDlg').close();
+    document.body.classList.add('picking');
+    var n = $('notice');
+    n.hidden = false; n.className = 'notice warn';
+    n.textContent = '지도에서 발생 위치를 누르세요. 그만두려면 Esc 를 누르세요.';
+  }
+  function endPick() {
+    state.picking = false;
+    document.body.classList.remove('picking');
+    render();
+    $('manualDlg').showModal();
+  }
+  function finishPick(ll) { state.pick = { lat: ll.lat, lng: ll.lng }; syncPick(); endPick(); }
+  function cancelPick() { endPick(); }
+
+  function api(method, path, body) {
+    return fetch(path, {
+      method: method, cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+        return j;
+      });
+    });
+  }
+
+  function submitManual() {
+    var f = form(), body = {};
+    ['disease_key', 'disease_text', 'date', 'end', 'sido', 'sigungu', 'emd', 'ri', 'species', 'count', 'memo'].forEach(function (k) {
+      body[k] = f.elements[k].value.trim();
+    });
+    if (state.pick) { body.lat = state.pick.lat; body.lng = state.pick.lng; }
+    var err = !body.disease_key ? '질병을 골라 주세요.'
+      : body.disease_key === 'etc' && !body.disease_text ? '질병명을 입력해 주세요.'
+      : !body.date ? '발생일을 입력해 주세요.'
+      : !body.emd ? '읍면동을 입력해 주세요.'
+      : !body.species ? '축종을 입력해 주세요.' : '';
+    $('dlgErr').textContent = err;
+    if (err) return;
+    var btn = $('dlgSave');
+    btn.disabled = true;
+    $('dlgErr').textContent = state.pick ? '저장하는 중입니다.' : '저장하는 중입니다. 주소를 좌표로 바꾸느라 몇 초 걸릴 수 있습니다.';
+    var id = state.editId;
+    api(id ? 'PUT' : 'POST', id ? 'api/manual/' + id : 'api/manual', body)
+      .then(function (j) {
+        $('manualDlg').close();
+        flash(j.item.lat == null ? '저장했습니다. 주소의 위치를 찾지 못해 위치 미확인으로 두었습니다. 수정에서 지도로 위치를 찍을 수 있습니다.' : '저장했습니다.');
+        return Promise.all([loadManual(), load()]);
+      })
+      .catch(function (e) { $('dlgErr').textContent = e.message; })
+      .then(function () { btn.disabled = false; });
+  }
+
+  function removeManual(id, what) {
+    if (!window.confirm('수기 입력 항목을 지울까요?\n' + what)) return;
+    api('DELETE', 'api/manual/' + id)
+      .then(function () { flash('수기 입력 항목을 지웠습니다.'); if (state.editId === id) openDialog(null); return Promise.all([loadManual(), load()]); })
+      .catch(function (e) { window.alert('지우지 못했습니다: ' + e.message); });
+  }
+
+  var flashT = null;
+  function flash(msg) {
+    state.flash = { msg: msg, until: Date.now() + 8000 };
+    var n = $('notice');
+    n.hidden = false; n.className = 'notice'; n.textContent = msg;
+    clearTimeout(flashT);
+    flashT = setTimeout(function () { if (state.data) render(); }, 8000);
+  }
+
+  function renderManualList() {
+    var ol = $('manualList');
+    if (!ol) return;
+    ol.textContent = '';
+    var byId = {};
+    ((state.data && state.data.items) || []).forEach(function (it) { if (it.source === 'manual') byId[it.id] = it; });
+    state.manual.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).forEach(function (m) {
+      var li = el('li', state.editId === m.id ? 'on' : null);
+      var line = el('div', 'ml');
+      line.appendChild(el('b', null, m.disease));
+      line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species + (m.lat == null ? ' · 위치 미확인' : '')));
+      li.appendChild(line);
+      var pub = byId[m.id] || {};
+      li.appendChild(manualActions({ id: m.id, disease: m.disease, addr: m.addr, api_match: pub.api_match }));
+      ol.appendChild(li);
+    });
+    $('manualCount').textContent = state.manual.length + '건';
+    if (!state.manual.length) ol.appendChild(el('li', 'empty', '아직 입력한 항목이 없습니다'));
+  }
+
   function load() {
-    fetch('api/outbreaks', { cache: 'no-store' })
+    return fetch('api/outbreaks', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
+        if (state.picking) return; // 위치를 찍는 동안에는 화면을 다시 그리지 않음
         if (!data.home) { // 서버가 첫 자료를 받는 중
           var n = $('notice');
           n.hidden = false; n.className = 'notice'; n.textContent = data.message || '자료를 받는 중입니다.';
@@ -504,4 +746,5 @@
   });
   tick(); setInterval(tick, 10000);
   load(); setInterval(load, REFRESH_MS);
+  initManual();
 })();

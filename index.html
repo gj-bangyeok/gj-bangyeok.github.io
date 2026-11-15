@@ -19,6 +19,7 @@
     </div>
   </div>
   <div class="controls">
+    <button type="button" id="manualBtn" class="manual-btn" hidden>수기 입력</button>
     <div class="periods" id="periods" role="group" aria-label="조회 기간">
       <button type="button" data-days="30">30일</button>
       <button type="button" data-days="90">90일</button>
@@ -83,6 +84,12 @@
       </div>
       <ol id="nearest" class="rows"></ol>
     </section>
+    <section class="panel res-panel" id="resPanel" hidden>
+      <div class="panel-head">
+        <h2>방역 자원</h2>
+      </div>
+      <p class="res" id="resLine"></p>
+    </section>
     <section class="panel grow">
       <h2>지도 보는 법</h2>
       <ul class="legend">
@@ -90,6 +97,8 @@
         <li><i class="ring r2"></i>3km 보호지역</li>
         <li><i class="ring r3"></i>10km 예찰지역</li>
         <li><i class="ring home"></i>시청 50km 기준선</li>
+        <li id="facLegend" hidden><i class="fac-key"></i>거점소독시설</li>
+        <li><i class="manual-key">수기</i>담당자 직접 입력</li>
       </ul>
       <p class="hint">방역대는 최근 30일 안에 발생해 아직 종식되지 않은 주요 질병에만 그립니다. 주소가 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
       <p class="hint" id="unlocated"></p>
@@ -97,6 +106,80 @@
     </section>
   </aside>
 </main>
+<dialog id="manualDlg" class="dlg" aria-labelledby="dlgTitle">
+  <form id="manualForm" novalidate>
+    <div class="dlg-head">
+      <h2 id="dlgTitle">발생 수기 입력</h2>
+      <button type="button" class="ghost" data-close>닫기</button>
+    </div>
+    <p class="dlg-warn">개인정보는 넣지 마세요. 이 내용은 공개 주소에도 표시됩니다. 농장명, 농장주 이름, 연락처는 적지 않습니다.</p>
+    <div class="fgrid">
+      <label>질병
+        <select name="disease_key" required>
+          <option value="">고르세요</option>
+          <option value="fmd">구제역</option>
+          <option value="hpai">고병원성 AI</option>
+          <option value="asf">아프리카돼지열병</option>
+          <option value="lsd">럼피스킨</option>
+          <option value="tb">결핵</option>
+          <option value="bru">브루셀라</option>
+          <option value="etc">기타 (직접 입력)</option>
+        </select>
+      </label>
+      <label id="etcWrap" hidden>질병명
+        <input name="disease_text" maxlength="30" autocomplete="off">
+      </label>
+      <label>발생일
+        <input type="date" name="date" required>
+      </label>
+      <label>종료일 <small>선택</small>
+        <input type="date" name="end">
+      </label>
+      <label>시도
+        <select name="sido" required></select>
+      </label>
+      <label>시군구
+        <input name="sigungu" maxlength="20" autocomplete="off" placeholder="예: 경주시">
+      </label>
+      <label>읍면동
+        <input name="emd" maxlength="20" autocomplete="off" placeholder="예: 안강읍">
+      </label>
+      <label>리 <small>선택</small>
+        <input name="ri" maxlength="20" autocomplete="off" placeholder="예: 산대리">
+      </label>
+      <label>축종
+        <input name="species" maxlength="20" list="speciesList" autocomplete="off" placeholder="예: 소-한우">
+      </label>
+      <label>두수 <small>선택</small>
+        <input name="count" inputmode="numeric" maxlength="9" autocomplete="off">
+      </label>
+      <label class="wide">메모 <small>선택, 200자 이내</small>
+        <textarea name="memo" maxlength="200" rows="2"></textarea>
+      </label>
+    </div>
+    <div class="pick">
+      <span id="pickText"></span>
+      <button type="button" class="ghost" id="pickBtn">지도에서 위치 찍기</button>
+      <button type="button" class="ghost" id="pickClear" hidden>찍은 위치 지우기</button>
+    </div>
+    <p class="dlg-err" id="dlgErr" role="alert"></p>
+    <div class="dlg-actions">
+      <button type="button" class="ghost" id="dlgNew" hidden>새로 입력</button>
+      <button type="button" class="ghost" data-close>취소</button>
+      <button type="submit" class="primary" id="dlgSave">저장</button>
+    </div>
+  </form>
+  <section class="dlg-list">
+    <h3>입력한 항목 <span class="muted" id="manualCount"></span></h3>
+    <ol id="manualList"></ol>
+  </section>
+  <datalist id="speciesList">
+    <option value="소-한우"><option value="소-젖소"><option value="소-육우"><option value="돼지">
+    <option value="닭-산란계"><option value="닭-육계"><option value="닭-종계"><option value="오리">
+    <option value="메추리"><option value="염소"><option value="사슴"><option value="꿀벌">
+  </datalist>
+</dialog>
+
 <script src="vendor/leaflet.js"></script>
 <script src="app.js"></script>
 </body>
