@@ -127,28 +127,76 @@ button { font: inherit; color: inherit; }
   min-width: 0;
 }
 .subline { margin-top: 4px; color: var(--text-2); font-size: var(--fs-title); }
-.controls { flex: none; display: flex; align-items: center; gap: 24px; }
-.periods {
-  display: flex;
-  padding: 4px;
-  gap: 4px;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-.periods button {
-  min-height: 40px;
-  padding: 0 16px;
-  border: 0;
+.controls { flex: none; display: flex; align-items: center; gap: 20px; }
+/* 조회 기간: 시작일~종료일과 빠른 선택. 벽면 화면에서 튀지 않게 낮은 대비로 둔다 */
+.range { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.range-dates { display: flex; align-items: center; gap: 6px; }
+.range-dates input {
+  width: 9.6em;
+  min-height: 32px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+.range-dates input:hover { border-color: var(--muted); }
+.range-dates input::-webkit-calendar-picker-indicator { opacity: 0.55; cursor: pointer; }
+.range-dates input::-webkit-calendar-picker-indicator:hover { opacity: 0.9; }
+.range[data-fixed="true"] #rangeEnd { border-color: var(--watch); color: var(--watch); }
+.range-sep { color: var(--muted); }
+.range-today {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--watch);
+  border-radius: var(--radius-sm);
+  background: var(--watch-bg);
+  color: var(--watch);
+  font-size: var(--fs-hint);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.range-today[hidden] { display: none; }
+.range-quick { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.range-quick button {
+  flex: 1 1 auto;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--text-2);
-  font-size: var(--fs-body);
+  font-size: var(--fs-hint);
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
-.periods button:hover { background: var(--surface-2); color: var(--text); }
-.periods button[aria-pressed="true"] { background: var(--text); color: var(--bg); font-weight: 600; }
+.range-quick button:hover { background: var(--surface-2); color: var(--text); }
+.range-quick button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); font-weight: 600; box-shadow: inset 0 -2px 0 var(--text-2); }
+.range-note a { color: var(--text); margin-left: 8px; }
+.range-note[hidden], .range-note a[hidden] { display: none; }
+.center { position: relative; }
+.past-tag {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 800;
+  padding: 6px 14px;
+  border: 1px solid var(--watch);
+  border-radius: var(--radius-sm);
+  background: var(--watch-bg);
+  color: var(--watch);
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.past-tag[hidden] { display: none; }
 .clock { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
 #clock { font-size: 26px; font-weight: 600; }
 #updated { color: var(--muted); font-size: var(--fs-meta); }
@@ -440,6 +488,8 @@ body.picking #map { cursor: crosshair; }
 @media (max-width: 1300px) {
   .board { grid-template-columns: minmax(280px, 300px) minmax(0, 1fr) minmax(280px, 300px); }
   :root { --fs-head: 26px; }
+  .controls { gap: 14px; }
+  .clock #clock { font-size: 22px; }
 }
 @media (max-width: 1100px) {
   body { overflow-y: auto; height: auto; }

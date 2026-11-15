@@ -22,10 +22,20 @@
   <div class="controls">
     <a class="manual-btn nav-link" href="stats.html" title="기간·지역·질병별 통계와 엑셀 내려받기">통계</a>
     <button type="button" id="manualBtn" class="manual-btn" title="공공데이터에 아직 없는 발생을 이 PC에 직접 입력">발생 입력</button>
-    <div class="periods" id="periods" role="group" aria-label="조회 기간">
-      <button type="button" data-days="30">30일</button>
-      <button type="button" data-days="90">90일</button>
-      <button type="button" data-days="365">1년</button>
+    <div class="range" id="range" role="group" aria-label="조회 기간">
+      <div class="range-dates">
+        <input type="date" id="rangeStart" aria-label="조회 시작일">
+        <span class="range-sep" aria-hidden="true">~</span>
+        <input type="date" id="rangeEnd" aria-label="조회 종료일">
+        <button type="button" class="range-today" id="rangeToday" hidden title="종료일을 오늘로 되돌리고 날짜가 바뀌면 따라가게 합니다">오늘로</button>
+      </div>
+      <div class="range-quick" id="rangeQuick" aria-label="빠른 기간 선택">
+        <button type="button" data-q="30" title="오늘까지 최근 30일">30일</button>
+        <button type="button" data-q="90" title="오늘까지 최근 90일">90일</button>
+        <button type="button" data-q="6m" title="오늘까지 최근 6개월">6개월</button>
+        <button type="button" data-q="1y" title="오늘까지 최근 1년">1년</button>
+        <button type="button" data-q="ytd" title="올해 1월 1일부터 오늘까지">올해</button>
+      </div>
     </div>
     <div class="clock">
       <time id="clock"></time>
@@ -35,6 +45,7 @@
 </header>
 
 <div id="notice" class="notice" role="status" hidden></div>
+<div id="rangeNote" class="notice range-note" role="status" hidden><span id="rangeNoteText"></span> <a id="rangeNoteLink" href="stats.html" hidden>통계 화면 열기</a></div>
 <div id="pickBar" class="pickbar" hidden>
   <span>지도에서 발생 위치를 누르세요. 표지는 끌어서 옮길 수 있습니다.</span>
   <button type="button" class="ghost" id="pickCancel">취소</button>
@@ -62,6 +73,7 @@
 
   <div class="center">
     <div id="map" role="region" aria-label="발생 지도"></div>
+    <div class="past-tag" id="pastTag" hidden></div>
     <section class="chart-panel" id="chartPanel">
       <div class="panel-head">
         <h2 id="chartTitle">날짜별 발생 건수</h2>
@@ -107,7 +119,7 @@
         <li id="facLegend" hidden><i class="fac-key"></i>거점소독시설</li>
         <li><i class="manual-key">수기</i>직접 입력</li>
       </ul>
-      <p class="hint">방역대는 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다. 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
+      <p class="hint">방역대는 조회 기간과 관계없이 오늘 기준 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다. 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
       <p class="hint" id="unlocated"></p>
       <p class="hint" id="source"></p>
     </section>

@@ -22,17 +22,37 @@
   var STALE_MS = 3 * 60 * 60 * 1000;
   var SVGNS = 'http://www.w3.org/2000/svg';
 
-  var state = { days: 30, shown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
+  // 조회 기간. mode: rel(오늘까지 최근 days일), mon(오늘까지 최근 months개월), ytd(올해), fixed(start~end 고정)
+  // rel·mon·ytd 는 날짜가 바뀌면 종료일이 오늘로 따라간다.
+  var QUICK = {
+    '30': { mode: 'rel', days: 30, name: '최근 30일' },
+    '90': { mode: 'rel', days: 90, name: '최근 90일' },
+    '6m': { mode: 'mon', months: 6, name: '최근 6개월' },
+    '1y': { mode: 'rel', days: 365, name: '최근 1년' },
+    'ytd': { mode: 'ytd', name: '올해' }
+  };
+  var ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  var state = { range: { mode: 'rel', days: 30 }, rangeMsg: null, dayKey: null, shown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
     manual: [], storeOk: true, editId: null, pick: null, picking: false, pickMarker: null, flash: null };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
-    if ([30, 90, 365].indexOf(saved.days) >= 0) state.days = saved.days;
+    state.range = cleanRange(saved.range) || (Number.isInteger(saved.days) && saved.days > 0 ? { mode: 'rel', days: saved.days } : state.range);
     if (saved.shown) Object.keys(saved.shown).forEach(function (k) { if (k in state.shown) state.shown[k] = !!saved.shown[k]; });
   } catch (e) { /* 저장값이 없어도 동작 */ }
 
   function save() {
-    try { localStorage.setItem('dash', JSON.stringify({ days: state.days, shown: state.shown })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown })); } catch (e) { /* 무시 */ }
+  }
+  // 저장해 둔 기간 값 검사(형식이 틀리면 null)
+  function cleanRange(r) {
+    if (!r || typeof r !== 'object') return null;
+    if (r.mode === 'rel' && Number.isInteger(r.days) && r.days >= 1 && r.days <= 3660) return { mode: 'rel', days: r.days };
+    if (r.mode === 'mon' && Number.isInteger(r.months) && r.months >= 1 && r.months <= 120) return { mode: 'mon', months: r.months };
+    if (r.mode === 'ytd') return { mode: 'ytd' };
+    if (r.mode === 'fixed' && ISO_RE.test(r.start) && ISO_RE.test(r.end) && r.start <= r.end) return { mode: 'fixed', start: r.start, end: r.end };
+    return null;
   }
   function $(id) { return document.getElementById(id); }
   function el(tag, cls, text) {
@@ -107,7 +127,113 @@
     if (c >= 0xac00 && c <= 0xd7a3) return (c - 0xac00) % 28 ? withFinal : noFinal;
     return /[lmnr0136789]$/i.test(word) ? withFinal : noFinal;
   }
-  function periodName(days) { return days === 365 ? '최근 1년' : '최근 ' + days + '일'; }
+  function dateOf(iso) { return new Date(iso + 'T00:00:00'); }
+  function addDays(iso, n) { var d = dateOf(iso); d.setDate(d.getDate() + n); return isoOf(d); }
+  function spanDays(a, b) { return Math.round((dateOf(b) - dateOf(a)) / 86400000) + 1; }
+  function addMonths(iso, n) { // 말일 넘침은 그 달 말일로
+    var d = dateOf(iso), day = d.getDate();
+    d.setDate(1); d.setMonth(d.getMonth() + n);
+    var last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, last));
+    return isoOf(d);
+  }
+  function dotDate(iso, withYear) { return (withYear ? iso.slice(0, 4) + '.' : '') + iso.slice(5, 7) + '.' + iso.slice(8, 10); }
+
+  // 지도 자료(api/outbreaks)가 들어 있는 가장 이른 날짜. 수기 입력은 따지지 않는다.
+  function dataMin() {
+    var items = (state.data && state.data.items) || [], m = null;
+    items.forEach(function (it) { if (it.date && (!m || it.date < m)) m = it.date; });
+    return m;
+  }
+
+  // 지금 조회할 실제 구간을 계산한다(오늘 기준)
+  function currentRange() {
+    var r = state.range, today = isoOf(today0()), start, end = today, follow = true, quick = null;
+    if (r.mode === 'rel') start = addDays(today, -(r.days - 1));
+    else if (r.mode === 'mon') start = addDays(addMonths(today, -r.months), 1);
+    else if (r.mode === 'ytd') start = today.slice(0, 4) + '-01-01';
+    else { start = r.start; end = r.end > today ? today : r.end; follow = false; }
+    if (start > end) start = end;
+    Object.keys(QUICK).forEach(function (k) {
+      var q = QUICK[k];
+      if (follow && q.mode === r.mode && q.days === r.days && q.months === r.months) quick = k;
+    });
+    var min = dataMin(), want = start;
+    if (min && start < min) start = min > end ? end : min;
+    var name;
+    if (quick) name = QUICK[quick].name;
+    else if (follow && r.mode === 'rel') name = '최근 ' + r.days + '일';
+    else if (follow && r.mode === 'mon') name = '최근 ' + r.months + '개월';
+    else {
+      var y = today.slice(0, 4), wy = start.slice(0, 4) !== y || end.slice(0, 4) !== y;
+      name = dotDate(start, wy) + '~' + dotDate(end, wy);
+    }
+    return { start: start, end: end, today: today, follow: follow, quick: quick, name: name,
+      clipped: want < start, wanted: want, min: min, past: end < today, days: spanDays(start, end) };
+  }
+
+  // 사용자가 날짜 칸을 바꿨을 때
+  function setRangeFromInputs(which) {
+    var cur = currentRange(), today = cur.today, min = cur.min;
+    var v = $(which === 'start' ? 'rangeStart' : 'rangeEnd').value;
+    if (!ISO_RE.test(v)) { syncRangeInputs(cur); return; } // 지운 경우 되돌림
+    if (Number(v.slice(0, 4)) < 1990) return; // 연도를 입력하는 중(예: 0202)
+    var start = which === 'start' ? v : cur.start, end = which === 'end' ? v : cur.end, msg = null;
+    if (end > today) { end = today; msg = '미래 날짜는 고를 수 없어 종료일을 오늘로 맞췄습니다.'; }
+    if (start > today) { start = today; msg = '미래 날짜는 고를 수 없어 시작일을 오늘로 맞췄습니다.'; }
+    if (min && start < min) {
+      start = min > end ? end : min;
+      msg = { link: true, text: '지도는 ' + dotDate(min, true) + ' 이후 자료만 표시합니다. 그 이전은 통계 화면에서 조회하세요.' };
+    }
+    if (min && end < min) end = min;
+    if (start > end) {
+      if (which === 'start') { end = start; msg = '시작일이 종료일보다 늦어 종료일을 시작일과 같게 맞췄습니다.'; }
+      else { start = end; msg = '종료일이 시작일보다 빨라 시작일을 종료일과 같게 맞췄습니다.'; }
+    }
+    // 종료일이 오늘이면 '오늘 추종'으로 두고 구간 길이로 기억한다
+    if (end !== today) state.range = { mode: 'fixed', start: start, end: end };
+    else if (!(cur.follow && start === cur.start && !cur.clipped)) state.range = { mode: 'rel', days: spanDays(start, end) };
+    rangeMsg(msg);
+    save();
+    render();
+  }
+  var rangeMsgT = null;
+  function rangeMsg(msg) {
+    clearTimeout(rangeMsgT);
+    if (!msg) { state.rangeMsg = null; return; }
+    if (typeof msg === 'string') msg = { text: msg };
+    msg.until = Date.now() + 12000;
+    state.rangeMsg = msg;
+    rangeMsgT = setTimeout(function () { if (state.data) render(); }, 12100);
+  }
+
+  function syncRangeInputs(cur) {
+    var s = $('rangeStart'), e = $('rangeEnd');
+    [s, e].forEach(function (x) { x.max = cur.today; x.min = cur.min || ''; });
+    s.value = cur.start;
+    e.value = cur.end;
+    s.title = '조회 시작일' + (cur.min ? '. 지도는 ' + dotDate(cur.min, true) + ' 이후 자료만 표시합니다. 그 이전은 통계 화면에서 조회하세요.' : '');
+    e.title = cur.follow ? '조회 종료일: 오늘(날짜가 바뀌면 따라갑니다). 바꾸면 그 날짜로 고정됩니다.' : '조회 종료일: ' + dotDate(cur.end, true) + '로 고정됨';
+    $('range').setAttribute('data-fixed', cur.follow ? 'false' : 'true');
+    $('rangeToday').hidden = cur.follow;
+    Array.prototype.forEach.call($('rangeQuick').children, function (b) {
+      b.setAttribute('aria-pressed', b.dataset.q === cur.quick ? 'true' : 'false');
+    });
+  }
+
+  function renderRangeNote(cur) {
+    var m = state.rangeMsg && state.rangeMsg.until > Date.now() ? state.rangeMsg : null;
+    if (!m && cur.clipped) {
+      m = { link: true, text: '고른 시작일(' + dotDate(cur.wanted, true) + ')보다 지도 자료가 짧습니다. 지도는 ' +
+        dotDate(cur.min, true) + ' 이후 자료만 표시합니다. 그 이전은 통계 화면에서 조회하세요.' };
+    }
+    $('rangeNote').hidden = !m;
+    $('rangeNoteText').textContent = m ? m.text : '';
+    $('rangeNoteLink').hidden = !(m && m.link);
+    var tag = $('pastTag');
+    tag.hidden = !cur.past;
+    tag.textContent = cur.past ? '과거 구간 조회 중 · ' + dotDate(cur.start, true) + '~' + dotDate(cur.end, true) : '';
+  }
 
   // ---------------------------------------------------------------- 지도
   function initMap(home) {
@@ -212,56 +338,66 @@
   }
 
   // ---------------------------------------------------------------- 막대그래프
-  function buckets(days) {
-    var t = today0(), out = [], i;
-    if (days === 30) {
-      for (i = days - 1; i >= 0; i--) {
-        var d = new Date(t); d.setDate(t.getDate() - i);
-        out.push({ from: i, to: i, label: (d.getMonth() + 1) + '/' + d.getDate(), title: md(isoOf(d)), mark: i % 5 === 0 });
+  // 구간 길이에 따라 일(45일 이하), 주(210일 이하), 월 단위 막대
+  function buckets(cur) {
+    var out = [], i, n, step, d;
+    if (cur.days <= 45) {
+      step = Math.max(1, Math.ceil(cur.days / 7));
+      for (i = cur.days - 1; i >= 0; i--) {
+        d = addDays(cur.end, -i);
+        out.push({ from: d, to: d, label: Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10)), title: md(d), mark: i % step === 0 });
       }
-    } else if (days === 90) {
-      for (i = 12; i >= 0; i--) {
-        var end = new Date(t); end.setDate(t.getDate() - i * 7);
-        var start = new Date(end); start.setDate(end.getDate() - 6);
-        out.push({ from: i * 7 + 6, to: i * 7, label: (start.getMonth() + 1) + '/' + start.getDate(),
-          title: md(isoOf(start)) + '부터 ' + md(isoOf(end)) + '까지', mark: i % 2 === 0 });
-      }
-    } else {
-      for (i = 11; i >= 0; i--) {
-        var m0 = new Date(t.getFullYear(), t.getMonth() - i, 1);
-        out.push({ month: m0.getFullYear() * 12 + m0.getMonth(), label: (m0.getMonth() + 1) + '월',
-          title: m0.getFullYear() + '년 ' + (m0.getMonth() + 1) + '월', mark: true });
-      }
+      return { unit: 'day', list: out };
     }
-    return out;
+    if (cur.days <= 210) {
+      n = Math.ceil(cur.days / 7);
+      step = Math.max(1, Math.ceil(n / 9));
+      for (i = n - 1; i >= 0; i--) {
+        var to = addDays(cur.end, -7 * i), from = addDays(to, -6);
+        if (from < cur.start) from = cur.start;
+        out.push({ from: from, to: to, label: Number(from.slice(5, 7)) + '/' + Number(from.slice(8, 10)),
+          title: md(from) + '부터 ' + md(to) + '까지', mark: i % step === 0 });
+      }
+      return { unit: 'week', list: out };
+    }
+    var first = Number(cur.start.slice(0, 4)) * 12 + Number(cur.start.slice(5, 7)) - 1;
+    var last = Number(cur.end.slice(0, 4)) * 12 + Number(cur.end.slice(5, 7)) - 1;
+    n = last - first + 1;
+    step = Math.max(1, Math.ceil(n / 14));
+    for (i = 0; i < n; i++) {
+      var k = first + i, yy = Math.floor(k / 12), mm = k % 12 + 1;
+      var mEnd = isoOf(new Date(yy, mm, 0)), f = yy + '-' + pad(mm) + '-01', t = mEnd;
+      if (f < cur.start) f = cur.start;
+      if (t > cur.end) t = cur.end;
+      var part = f.slice(8) !== '01' || t !== mEnd;
+      out.push({ from: f, to: t, label: (n > 12 && (mm === 1 || i === 0) ? String(yy).slice(2) + '.' : '') + mm + '월',
+        title: yy + '년 ' + mm + '월' + (part ? ' (' + md(f) + '~' + md(t) + ')' : ''), mark: (n - 1 - i) % step === 0 });
+    }
+    return { unit: 'month', list: out };
   }
 
   function drawChart(shown) {
     var box = $('chart'), tip = $('tip');
     box.textContent = '';
     tip.hidden = true;
-    var titles = { 30: '날짜별 발생 건수', 90: '주별 발생 건수', 365: '월별 발생 건수' };
-    $('chartTitle').textContent = titles[state.days];
-    $('chartNote').textContent = '왼쪽에서 켜 둔 질병만 쌓아서 표시';
+    var cur = currentRange(), bk = buckets(cur);
+    var title = { day: '날짜별 발생 건수', week: '주별 발생 건수', month: '월별 발생 건수' }[bk.unit];
+    $('chartTitle').textContent = title;
+    $('chartNote').textContent = cur.name + ', 왼쪽에서 켜 둔 질병만 쌓아서 표시';
 
-    var bs = buckets(state.days);
+    var bs = bk.list;
     var groups = GROUPS.filter(function (g) { return state.shown[g.id]; });
     bs.forEach(function (b) { b.n = {}; b.total = 0; groups.forEach(function (g) { b.n[g.id] = 0; }); });
     shown.forEach(function (it) {
       var b = null, i;
-      if (state.days === 365) {
-        var key = Number(it.date.slice(0, 4)) * 12 + Number(it.date.slice(5, 7)) - 1;
-        for (i = 0; i < bs.length; i++) if (bs[i].month === key) { b = bs[i]; break; }
-      } else {
-        for (i = 0; i < bs.length; i++) if (it.ago <= bs[i].from && it.ago >= bs[i].to) { b = bs[i]; break; }
-      }
+      for (i = 0; i < bs.length; i++) if (it.date >= bs[i].from && it.date <= bs[i].to) { b = bs[i]; break; }
       if (b && it.g.id in b.n) { b.n[it.g.id]++; b.total++; }
     });
 
     var W = Math.max(box.clientWidth, 200), H = box.clientHeight || 168;
     var left = 36, right = 4, top = 8, bottom = 24;
     var plotW = W - left - right, plotH = H - top - bottom;
-    var root = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': titles[state.days] });
+    var root = svg('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': title + ', ' + cur.name });
     var max = 0;
     bs.forEach(function (b) { if (b.total > max) max = b.total; });
     var step = max <= 4 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : max <= 50 ? 10 : max <= 100 ? 20 : Math.ceil(max / 4 / 50) * 50;
@@ -439,7 +575,9 @@
     }).filter(function (it) { return it.ago >= 0; });
     markApiMatch(all);
     all.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
-    var items = all.filter(function (it) { return it.ago < state.days; });
+    var cur = currentRange();
+    state.dayKey = cur.today;
+    var items = all.filter(function (it) { return it.date >= cur.start && it.date <= cur.end; });
 
     var rs = regionShortOf(home.region);
     // 수기 주소에 시군 이름이 없으면(예: "안강읍 산대리") 찍은 위치로 관내를 짐작한다
@@ -451,11 +589,10 @@
 
     Array.prototype.forEach.call(document.querySelectorAll('.homeName'), function (e) { e.textContent = home.name; });
     $('regionLabel').textContent = rs + ' 도내';
-    $('periodLabel').textContent = periodName(state.days);
-    $('statLabel').textContent = periodName(state.days) + ', 모든 질병';
-    Array.prototype.forEach.call($('periods').children, function (b) {
-      b.setAttribute('aria-pressed', Number(b.dataset.days) === state.days ? 'true' : 'false');
-    });
+    $('periodLabel').textContent = cur.name;
+    $('statLabel').textContent = cur.name + ', 모든 질병';
+    syncRangeInputs(cur);
+    renderRangeNote(cur);
     $('source').textContent = data.source ? '자료: ' + data.source : '';
 
     // 안내 띠
@@ -863,12 +1000,25 @@
     var w = '일월화수목금토'[d.getDay()];
     $('clock').textContent = (d.getMonth() + 1) + '월 ' + d.getDate() + '일 (' + w + ') ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     $('clock').setAttribute('datetime', d.toISOString());
+    // 자정이 지나면 '오늘 추종' 구간과 상황 판정을 새 날짜로 다시 계산
+    if (state.data && state.dayKey && state.dayKey !== isoOf(d) && !state.picking) render();
   }
 
-  $('periods').addEventListener('click', function (e) {
-    var b = e.target.closest('button');
-    var days = b && Number(b.dataset.days);
-    if (days) { state.days = days; save(); render(); }
+  $('rangeQuick').addEventListener('click', function (e) {
+    var b = e.target.closest('button'), q = b && QUICK[b.dataset.q];
+    if (!q) return;
+    state.range = q.mode === 'rel' ? { mode: 'rel', days: q.days } : q.mode === 'mon' ? { mode: 'mon', months: q.months } : { mode: 'ytd' };
+    rangeMsg(null); save(); render();
+  });
+  $('rangeToday').addEventListener('click', function () {
+    // 고정했던 구간 길이를 유지한 채 종료일만 오늘로
+    state.range = { mode: 'rel', days: currentRange().days };
+    rangeMsg(null); save(); render();
+  });
+  ['start', 'end'].forEach(function (w) {
+    var inp = $(w === 'start' ? 'rangeStart' : 'rangeEnd');
+    inp.addEventListener('change', function () { setRangeFromInputs(w); });
+    inp.addEventListener('blur', function () { if (state.data) syncRangeInputs(currentRange()); });
   });
   var rt = null;
   window.addEventListener('resize', function () {
