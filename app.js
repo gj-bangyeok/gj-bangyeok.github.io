@@ -33,17 +33,19 @@
   };
   var ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-  var state = { range: { mode: 'rel', days: 30 }, rangeMsg: null, dayKey: null, shown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
+  var state = { range: { mode: 'rel', days: 30 }, rangeMsg: null, dayKey: null, shown: {}, facShown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
     manual: [], storeOk: true, editId: null, pick: null, picking: false, pickMarker: null, flash: null };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
     state.range = cleanRange(saved.range) || (Number.isInteger(saved.days) && saved.days > 0 ? { mode: 'rel', days: saved.days } : state.range);
     if (saved.shown) Object.keys(saved.shown).forEach(function (k) { if (k in state.shown) state.shown[k] = !!saved.shown[k]; });
+    // 시설은 종류(type) 이름으로 기억한다. 처음 보는 종류는 켜진 상태로 시작한다.
+    if (saved.facShown && typeof saved.facShown === 'object') Object.keys(saved.facShown).forEach(function (k) { state.facShown[k] = !!saved.facShown[k]; });
   } catch (e) { /* 저장값이 없어도 동작 */ }
 
   function save() {
-    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown, facShown: state.facShown })); } catch (e) { /* 무시 */ }
   }
   // 저장해 둔 기간 값 검사(형식이 틀리면 null)
   function cleanRange(r) {
@@ -100,11 +102,38 @@
     return box;
   }
 
-  // 거점소독시설 표지: 질병 표지와 겹치지 않게 테두리 있는 사각형 안의 십자
-  function facIcon(size) {
+  // 시설 표지: 모두 어두운 바탕에 밝은 테두리의 둥근 사각형이고(질병 표지는 색을 채운 도형), 안쪽 무늬로 종류를 나눈다.
+  // config.json facilities 의 type 이 FAC_TYPES 에 없으면 아직 쓰지 않은 무늬를 나오는 순서대로 쓴다.
+  var DEFAULT_FAC_TYPE = '거점소독시설';
+  var FAC_GLYPHS = {
+    cross: { path: 'M11 6v10M6 11h10' },          // 십자
+    roof: { path: 'M6.5 15.5v-5L11 6.5l4.5 4v5' }, // 지붕(집 모양)
+    ring: { circle: 4.2 },                         // 고리
+    bars: { path: 'M7.5 7v8M11 7v8M14.5 7v8' },    // 세로줄 셋
+    slash: { path: 'M7 15L15 7' },                 // 빗금
+    dot: { dot: 3.2 }                              // 가운데 점
+  };
+  var FAC_ORDER = ['cross', 'roof', 'ring', 'bars', 'slash', 'dot'];
+  var FAC_TYPES = { '거점소독시설': 'cross', '도축장': 'roof', '가축시장': 'ring', '사료공장': 'bars' };
+  var facGlyphMemo = {};
+  function facType(f) { var t = f && typeof f.type === 'string' ? f.type.trim() : ''; return t || DEFAULT_FAC_TYPE; }
+  function facGlyph(type) {
+    if (FAC_TYPES[type]) return FAC_TYPES[type];
+    if (!facGlyphMemo[type]) {
+      var used = Object.keys(FAC_TYPES).map(function (k) { return FAC_TYPES[k]; })
+        .concat(Object.keys(facGlyphMemo).map(function (k) { return facGlyphMemo[k]; }));
+      var free = FAC_ORDER.filter(function (g) { return used.indexOf(g) < 0; });
+      facGlyphMemo[type] = free.length ? free[0] : FAC_ORDER[Object.keys(facGlyphMemo).length % FAC_ORDER.length];
+    }
+    return facGlyphMemo[type];
+  }
+  function facIcon(size, type) {
+    var ink = token('--fac'), g = FAC_GLYPHS[facGlyph(type || DEFAULT_FAC_TYPE)];
     var box = svg('svg', { width: size, height: size, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
-    box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: token('--fac'), 'stroke-width': 2 }));
-    box.appendChild(svg('path', { d: 'M11 6v10M6 11h10', stroke: token('--fac'), 'stroke-width': 2.6, 'stroke-linecap': 'round' }));
+    box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: ink, 'stroke-width': 2 }));
+    if (g.path) box.appendChild(svg('path', { d: g.path, fill: 'none', stroke: ink, 'stroke-width': 2.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    if (g.circle) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.circle, fill: 'none', stroke: ink, 'stroke-width': 2.4 }));
+    if (g.dot) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.dot, fill: ink }));
     return box;
   }
 
@@ -260,27 +289,79 @@
   }
 
   // ---------------------------------------------------------------- 방역 자원
+  function facOn(type) { return state.facShown[type] !== false; }
+
+  // 시설 종류의 위치가 모두 보이게 지도를 옮긴다(꺼져 있으면 켠다)
+  function goFacilities(type) {
+    var pts = ((state.data && state.data.resources && state.data.resources.facilities) || []).filter(function (f) {
+      return facType(f) === type && f.lat != null && f.lng != null;
+    }).map(function (f) { return [f.lat, f.lng]; });
+    if (!pts.length || !state.map) return;
+    if (!facOn(type)) { state.facShown[type] = true; save(); render(); }
+    if (pts.length === 1) state.map.setView(pts[0], 14);
+    else state.map.fitBounds(pts, { padding: [80, 80], maxZoom: 14 });
+  }
+
   function drawResources(res) {
-    var fac = (res && res.facilities) || [], veh = (res && res.vehicles) || [];
+    var fac = ((res && res.facilities) || []).filter(function (f) { return f && typeof f === 'object'; });
+    var veh = (res && res.vehicles) || [];
+    // 종류별로 묶는다(config.json 에 나온 순서 유지)
+    var types = [], byType = {};
+    fac.forEach(function (f) {
+      var t = facType(f);
+      if (!byType[t]) { byType[t] = []; types.push(t); }
+      byType[t].push(f);
+    });
+
     state.facLayer.clearLayers();
     fac.forEach(function (f) {
-      if (f.lat == null || f.lng == null) return;
-      var icon = facIcon(18);
+      var t = facType(f);
+      if (f.lat == null || f.lng == null || !facOn(t)) return;
+      var icon = facIcon(18, t);
       icon.setAttribute('class', 'mk');
       var box = el('div');
-      box.appendChild(el('b', null, f.name));
+      box.appendChild(el('b', null, f.name || t));
+      if (f.name && f.name.indexOf(t) < 0) box.appendChild(el('div', null, t));
       box.appendChild(el('div', null, f.addr));
       if (f.geo === 'road') box.appendChild(el('div', null, '도로 위치 기준이라 실제 건물과 조금 다를 수 있습니다'));
       L.marker([f.lat, f.lng], {
         icon: L.divIcon({ className: '', html: icon, iconSize: [18, 18], iconAnchor: [9, 9] }),
-        zIndexOffset: 2500, title: f.name, alt: f.name
+        zIndexOffset: 2500, title: f.name || t, alt: f.name || t
       }).bindPopup(box).addTo(state.facLayer);
     });
-    var parts = [];
-    if (fac.length) {
-      var unloc = fac.filter(function (f) { return f.lat == null; }).length;
-      parts.push('거점소독시설 ' + fac.length + '곳' + (unloc ? '(지도 ' + (fac.length - unloc) + '곳)' : ''));
-    }
+
+    // 왼쪽 '시설' 목록 (켜고 끄기, 위치로 이동)
+    var ul = $('facCounts');
+    ul.textContent = '';
+    types.forEach(function (t) {
+      var list = byType[t], located = list.filter(function (f) { return f.lat != null && f.lng != null; });
+      var li = el('li', 'fac-row');
+      var b = el('button', 'count');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', facOn(t) ? 'true' : 'false');
+      b.title = (facOn(t) ? '지도에서 숨기기' : '지도에 표시하기') + '\n' + list.map(function (f) { return (f.name || t) + ': ' + (f.addr || '주소 없음'); }).join('\n') +
+        (located.length < list.length ? '\n위치를 모르는 ' + (list.length - located.length) + '곳은 지도에 나오지 않습니다' : '');
+      b.appendChild(facIcon(22, t));
+      b.appendChild(el('span', 'name', t));
+      b.appendChild(el('span', 'n', String(list.length)));
+      b.addEventListener('click', function () { state.facShown[t] = !facOn(t); save(); render(); });
+      li.appendChild(b);
+      var go = el('button', 'fac-go', '위치');
+      go.type = 'button';
+      go.title = '지도를 ' + t + ' 위치로 옮깁니다';
+      go.setAttribute('aria-label', t + ' 위치로 지도 이동');
+      go.disabled = !located.length;
+      go.addEventListener('click', function () { goFacilities(t); });
+      li.appendChild(go);
+      ul.appendChild(li);
+    });
+    $('facPanel').hidden = !types.length;
+
+    // 오른쪽 '방역 자원' 한 줄 요약
+    var parts = types.map(function (t) {
+      var n = byType[t].length, unloc = byType[t].filter(function (f) { return f.lat == null; }).length;
+      return t + ' ' + n + '곳' + (unloc ? '(지도 ' + (n - unloc) + '곳)' : '');
+    });
     if (veh.length) {
       parts.push('소독차량 ' + veh.map(function (v) {
         return v.name.replace('경주시 소유', '시').replace('축협 공동방제단', '공동방제단') + '\u00a0' + v.count + '대';
@@ -288,9 +369,8 @@
     }
     $('resPanel').hidden = !parts.length;
     $('resLine').textContent = parts.join(', ');
-    $('resLine').title = fac.map(function (f) { return f.name + ': ' + f.addr; }).concat(
+    $('resLine').title = fac.map(function (f) { return (f.name || facType(f)) + ': ' + f.addr; }).concat(
       veh.map(function (v) { return v.name + ' ' + v.count + '대'; })).join('\n');
-    $('facLegend').hidden = !fac.some(function (f) { return f.lat != null; });
   }
 
   function popup(it) {
