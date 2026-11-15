@@ -543,3 +543,61 @@ body.picking #map { cursor: crosshair; }
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0ms !important; animation-duration: 0ms !important; }
 }
+
+/* ---------- 아이콘 바꾸기 ---------- */
+/* 목록의 아이콘 자리는 켜고 끄기 단추 안에 빈 칸(.ico-slot)으로 두고, 그 위에 아이콘 단추(.ico-btn)를 겹친다(단추 안에 단추를 넣지 않기 위해) */
+.count-wrap { position: relative; }
+.fac-row .count-wrap { flex: 1; min-width: 0; }
+.ico-slot { display: block; width: 22px; height: 22px; }
+.ico-btn {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+}
+.count-wrap.off > .ico-btn { opacity: 0.4; }
+.count-wrap.off > .ico-btn .shape { filter: grayscale(1); }
+.ico-btn:hover, .ico-btn[aria-expanded="true"] { box-shadow: 0 0 0 2px var(--text-2); opacity: 1; }
+.ico-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ico-btn::after {
+  content: attr(data-tip); position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%);
+  padding: 2px 8px; border-radius: 4px; background: var(--surface-3); color: var(--text); box-shadow: 0 2px 8px var(--shadow);
+  font-size: 13px; font-weight: 600; line-height: 20px; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity var(--dur) var(--ease); z-index: 5;
+}
+.ico-btn:hover::after { opacity: 1; transition-delay: 250ms; }
+.ico-btn[aria-expanded="true"]::after { opacity: 0; }
+
+.icon-pop {
+  position: fixed; z-index: 1500; width: 330px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto;
+  padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); box-shadow: 0 10px 28px var(--shadow); font-size: var(--fs-meta);
+}
+.icon-pop:focus { outline: none; }
+.ip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ip-head h3 { margin: 0; font-size: var(--fs-title); font-weight: 600; }
+.ip-sec + .ip-sec { margin-top: 8px; }
+.ip-lab { margin-bottom: 4px; color: var(--text-2); font-size: 14px; }
+.ip-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.ip-opt {
+  position: relative; display: grid; place-items: center; height: 38px; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); cursor: pointer;
+}
+.ip-opt:hover { background: var(--surface-3); }
+.ip-opt[aria-pressed="true"] { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); background: var(--surface-3); }
+.ip-opt:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ip-grid.cols5 { grid-template-columns: repeat(5, 1fr); }
+.ip-opt.is-def { border-style: dashed; border-color: var(--muted); }
+.ip-opt.is-def[aria-pressed="true"] { border-style: solid; border-color: var(--text); }
+.ip-note, .ip-hint { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.ip-prev { display: flex; gap: 8px; margin-top: 8px; }
+.ip-cell { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--muted); font-size: 12px; }
+.ip-tile { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 40px; border-radius: var(--radius-sm); }
+.ip-tile.dark { background: var(--surface-2); }
+.ip-tile.light { background: #d9dcd6; }
+.ip-dup { margin: 8px 0 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--watch-bg); color: var(--watch); font-size: 13px; }
+.ip-dup[hidden] { display: none; }
+.ip-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.ip-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ip-foot .muted { font-size: 12px; white-space: nowrap; }
+.ip-foot button { white-space: nowrap; }
+.icon-pop button:disabled { opacity: 0.4; cursor: default; }

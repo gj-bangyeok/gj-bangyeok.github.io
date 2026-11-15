@@ -70,7 +70,9 @@
   }
   var css = getComputedStyle(document.documentElement);
   function token(name) { return css.getPropertyValue(name).trim(); }
-  GROUPS.forEach(function (g) { g.color = token(g.token); });
+  // 기본 모양과 색 이름(PALETTE id). 실제 g.shape, g.color 는 applyIcons() 가 아이콘 설정 표에서 정한다
+  var DEF_COLOR = { '--d-fmd': 'red', '--d-hpai': 'orange', '--d-asf': 'blue', '--d-lsd': 'teal', '--d-tb': 'light', '--d-bru': 'gray', '--d-etc': 'dark' };
+  GROUPS.forEach(function (g) { g.defShape = g.shape; g.defColor = DEF_COLOR[g.token]; g.color = token(g.token); });
 
   function groupOf(name) {
     name = name || '';
@@ -83,16 +85,40 @@
     return GROUPS[GROUPS.length - 1];
   }
 
-  // 질병 모양 아이콘 (색과 모양을 함께 써서 구분)
+  // 정다각형·별 꼭짓점 (위쪽 꼭짓점부터 시계 방향). inner 가 있으면 별(안쪽 꼭짓점 비율)
+  function polyPts(n, cx, cy, r, inner) {
+    var pts = [], k = inner ? 2 * n : n;
+    for (var i = 0; i < k; i++) {
+      var a = -Math.PI / 2 + i * 2 * Math.PI / k, rr = inner && i % 2 ? r * inner : r;
+      pts.push((cx + rr * Math.cos(a)).toFixed(2), (cy + rr * Math.sin(a)).toFixed(2));
+    }
+    return pts.join(' ');
+  }
+  function fx(list) { return list.map(function (v) { return Number(v.toFixed(2)); }).join(' '); }
+
+  // 질병 모양 아이콘 (색과 모양을 함께 써서 구분). g 는 { shape, color } 를 가진 값(GROUPS 항목 또는 미리보기용)
   function shapeIcon(g, size, faded) {
     var s = size, h = s / 2, w = Math.max(1.5, s / 9);
     var box = svg('svg', { width: s, height: s, viewBox: '0 0 ' + s + ' ' + s, 'aria-hidden': 'true', 'class': 'shape' });
-    var m = w / 2 + 0.5, node;
+    var m = w / 2 + 0.5, node, R = h - m;
     if (g.shape === 'circle') node = svg('circle', { cx: h, cy: h, r: h - m });
     else if (g.shape === 'triangle') node = svg('polygon', { points: [h, m + 0.5, s - m, s - m, m, s - m].join(' ') });
     else if (g.shape === 'square') node = svg('rect', { x: m + 1, y: m + 1, width: s - 2 * m - 2, height: s - 2 * m - 2, rx: 1.5 });
     else if (g.shape === 'diamond') node = svg('polygon', { points: [h, m, s - m, h, h, s - m, m, h].join(' ') });
-    else node = svg('circle', { cx: h, cy: h, r: h * 0.62 });
+    else if (g.shape === 'pentagon') node = svg('polygon', { points: polyPts(5, h, h + R * 0.1, R * 1.02) });
+    else if (g.shape === 'hexagon') node = svg('polygon', { points: polyPts(6, h, h, R) });
+    else if (g.shape === 'star') node = svg('polygon', { points: polyPts(5, h, h + R * 0.12, R * 1.08, 0.48) });
+    else if (g.shape === 'invtri') node = svg('polygon', { points: fx([m, m + 0.5, s - m, m + 0.5, h, s - m]) });
+    else if (g.shape === 'plus') {
+      var a = (s - 2 * m) * 0.19, lo = m + 0.5, hi = s - m - 0.5;
+      node = svg('polygon', { points: fx([h - a, lo, h + a, lo, h + a, h - a, hi, h - a, hi, h + a, h + a, h + a,
+        h + a, hi, h - a, hi, h - a, h + a, lo, h + a, lo, h - a, h - a, h - a]) });
+    } else if (g.shape === 'pin') { // 물방울(핀): 위쪽 원과 아래 끝점을 접선으로 잇는다
+      var pr = (s - 2 * m) * 0.36, pcx = h, pcy = m + pr, tip = s - m, th = Math.acos(pr / (tip - pcy));
+      var lx = pcx - pr * Math.sin(th), rx = pcx + pr * Math.sin(th), ty = pcy + pr * Math.cos(th);
+      node = svg('path', { d: 'M' + fx([pcx, tip]) + 'L' + fx([lx, ty]) + 'A' + fx([pr, pr]) + ' 0 1 1 ' + fx([rx, ty]) + 'Z' });
+    }
+    else node = svg('circle', { cx: h, cy: h, r: h * 0.62 }); // dot(작은 원)
     node.setAttribute('fill', g.color);
     node.setAttribute('stroke', token('--marker-edge'));
     node.setAttribute('stroke-width', w);
@@ -104,6 +130,7 @@
 
   // 시설 표지: 모두 어두운 바탕에 밝은 테두리의 둥근 사각형이고(질병 표지는 색을 채운 도형), 안쪽 무늬로 종류를 나눈다.
   // config.json facilities 의 type 이 FAC_TYPES 에 없으면 아직 쓰지 않은 무늬를 나오는 순서대로 쓴다.
+  // 무늬 칸: path(선), circle(고리 반지름), dot(가운데 점 반지름), dots(작은 점 [x, y, r] 목록), sw(선 굵기)
   var DEFAULT_FAC_TYPE = '거점소독시설';
   var FAC_GLYPHS = {
     cross: { path: 'M11 6v10M6 11h10' },          // 십자
@@ -111,13 +138,17 @@
     ring: { circle: 4.2 },                         // 고리
     bars: { path: 'M7.5 7v8M11 7v8M14.5 7v8' },    // 세로줄 셋
     slash: { path: 'M7 15L15 7' },                 // 빗금
-    dot: { dot: 3.2 }                              // 가운데 점
+    dot: { dot: 3.2 },                             // 가운데 점
+    flag: { path: 'M7.5 16.5v-11l8 3.3-8 3.3', sw: 2.3 },                              // 깃발(삼각 깃발)
+    truck: { path: 'M5 13.2V7.5h7.2v5.7zM12.2 9.8h2.4l2.3 2.5v.9h-4.7', sw: 2, dots: [[7.8, 15.8, 1.6], [14.6, 15.8, 1.6]] }, // 트럭
+    drop: { path: 'M11 5.6c2.3 2.9 3.7 4.9 3.7 6.9a3.7 3.7 0 0 1-7.4 0c0-2 1.4-4 3.7-6.9z', sw: 2.2 }, // 물방울
+    shield: { path: 'M11 5.6l4.6 1.7v3.4c0 2.9-1.9 4.8-4.6 5.8-2.7-1-4.6-2.9-4.6-5.8V7.3z', sw: 2.2 } // 방패
   };
   var FAC_ORDER = ['cross', 'roof', 'ring', 'bars', 'slash', 'dot'];
   var FAC_TYPES = { '거점소독시설': 'cross', '도축장': 'roof', '가축시장': 'ring', '사료공장': 'bars' };
   var facGlyphMemo = {};
   function facType(f) { var t = f && typeof f.type === 'string' ? f.type.trim() : ''; return t || DEFAULT_FAC_TYPE; }
-  function facGlyph(type) {
+  function facGlyph(type) { // 기본 무늬
     if (FAC_TYPES[type]) return FAC_TYPES[type];
     if (!facGlyphMemo[type]) {
       var used = Object.keys(FAC_TYPES).map(function (k) { return FAC_TYPES[k]; })
@@ -127,15 +158,90 @@
     }
     return facGlyphMemo[type];
   }
-  function facIcon(size, type) {
-    var ink = token('--fac'), g = FAC_GLYPHS[facGlyph(type || DEFAULT_FAC_TYPE)];
+  function facIcon(size, type) { return facIconOf(size, facSpec(type || DEFAULT_FAC_TYPE)); }
+  // spec 은 { glyph, color }. color 는 색 이름(PALETTE id)
+  function facIconOf(size, spec) {
+    var ink = colorOf(spec.color), g = FAC_GLYPHS[spec.glyph] || FAC_GLYPHS.cross;
     var box = svg('svg', { width: size, height: size, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
     box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: ink, 'stroke-width': 2 }));
-    if (g.path) box.appendChild(svg('path', { d: g.path, fill: 'none', stroke: ink, 'stroke-width': 2.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+    if (g.path) box.appendChild(svg('path', { d: g.path, fill: 'none', stroke: ink, 'stroke-width': g.sw || 2.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     if (g.circle) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.circle, fill: 'none', stroke: ink, 'stroke-width': 2.4 }));
     if (g.dot) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.dot, fill: ink }));
+    (g.dots || []).forEach(function (d) { box.appendChild(svg('circle', { cx: d[0], cy: d[1], r: d[2], fill: ink })); });
     return box;
   }
+
+  // ---------------------------------------------------------------- 아이콘 설정 표
+  // 질병·시설 표지의 모양과 색은 모두 여기서 읽는다(지도 표지, 왼쪽 목록, 가까운·최근 발생 목록, 막대그래프, 그래프 풍선 도움말).
+  // 기본값: 질병은 GROUPS 의 shape 와 token 색, 시설은 FAC_TYPES 무늬와 흰색(--fac). 방역대 원은 질병과 관계없이 --zone 색.
+  // 사용자가 바꾼 값만 이 브라우저의 localStorage('dash-icons')에 저장하고, 수기 입력 내보내기 파일에도 담는다.
+  var PALETTE = [ // token 이 있으면 style.css 의 값을 읽는다(기본 화면과 같은 색)
+    { id: 'red', name: '빨강', token: '--d-fmd', hex: '#ff5f57' },
+    { id: 'orange', name: '주황', token: '--d-hpai', hex: '#f5a623' },
+    { id: 'yellow', name: '노랑', hex: '#f2d43d' },
+    { id: 'teal', name: '청록', token: '--d-lsd', hex: '#2fc7a7' },
+    { id: 'blue', name: '파랑', token: '--d-asf', hex: '#4fa3ff' },
+    { id: 'purple', name: '보라', hex: '#b58cff' },
+    { id: 'white', name: '흰색', token: '--fac', hex: '#f4f7f9' },
+    { id: 'light', name: '밝은 회색', token: '--d-tb', hex: '#c3cad2' },
+    { id: 'gray', name: '회색', token: '--d-bru', hex: '#939da8' },
+    { id: 'dark', name: '어두운 회색', token: '--d-etc', hex: '#69737e' }
+  ];
+  var D_SHAPES = [
+    { id: 'circle', name: '원' }, { id: 'triangle', name: '삼각형' }, { id: 'square', name: '사각형' },
+    { id: 'diamond', name: '마름모' }, { id: 'pentagon', name: '오각형' }, { id: 'hexagon', name: '육각형' },
+    { id: 'star', name: '별' }, { id: 'plus', name: '십자' }, { id: 'invtri', name: '역삼각형' },
+    { id: 'pin', name: '물방울(핀)' }, { id: 'dot', name: '작은 원' }
+  ];
+  var F_GLYPHS = [
+    { id: 'cross', name: '십자' }, { id: 'roof', name: '지붕(건물)' }, { id: 'ring', name: '고리' },
+    { id: 'bars', name: '세로줄' }, { id: 'flag', name: '깃발' }, { id: 'truck', name: '트럭' },
+    { id: 'drop', name: '물방울' }, { id: 'shield', name: '방패' }, { id: 'slash', name: '빗금' }, { id: 'dot', name: '점' }
+  ];
+  var ICON_KEY = 'dash-icons';
+  var FAC_ICON_MAX = 50;
+  function inList(list, id) { return list.some(function (x) { return x.id === id; }); }
+  function nameIn(list, id) { var x = list.filter(function (y) { return y.id === id; })[0]; return x ? x.name : id; }
+  function colorOf(id) {
+    var p = PALETTE.filter(function (x) { return x.id === id; })[0] || PALETTE[6];
+    return (p.token && token(p.token)) || p.hex;
+  }
+  // 저장값·가져온 값 검사. 틀린 칸은 버리고(기본값 사용) 나머지만 남긴다
+  function cleanIcons(raw) {
+    var out = { disease: {}, facility: {} };
+    if (!raw || typeof raw !== 'object') return out;
+    var d = raw.disease, f = raw.facility;
+    if (d && typeof d === 'object') GROUPS.forEach(function (g) {
+      var v = d[g.id], o = {};
+      if (!v || typeof v !== 'object') return;
+      if (inList(D_SHAPES, v.shape)) o.shape = v.shape;
+      if (inList(PALETTE, v.color)) o.color = v.color;
+      if (o.shape || o.color) out.disease[g.id] = o;
+    });
+    if (f && typeof f === 'object' && !Array.isArray(f)) Object.keys(f).slice(0, FAC_ICON_MAX).forEach(function (t) {
+      var v = f[t], o = {}, name = String(t).trim();
+      if (!name || name.length > 40 || !v || typeof v !== 'object') return;
+      if (inList(F_GLYPHS, v.glyph)) o.glyph = v.glyph;
+      if (inList(PALETTE, v.color)) o.color = v.color;
+      if (o.glyph || o.color) out.facility[name] = o;
+    });
+    return out;
+  }
+  var icons = { disease: {}, facility: {} };
+  try { icons = cleanIcons(JSON.parse(localStorage.getItem(ICON_KEY) || 'null')); } catch (e) { /* 저장값이 없거나 깨져도 기본값으로 동작 */ }
+  function saveIcons() {
+    try { localStorage.setItem(ICON_KEY, JSON.stringify({ version: 1, disease: icons.disease, facility: icons.facility })); return true; } catch (e) { return false; }
+  }
+  function iconCount() { return Object.keys(icons.disease).length + Object.keys(icons.facility).length; }
+  function diseaseDefault(g) { return { shape: g.defShape, color: g.defColor }; }
+  function diseaseSpec(g) { var o = icons.disease[g.id] || {}, d = diseaseDefault(g); return { shape: o.shape || d.shape, color: o.color || d.color }; }
+  function facDefault(type) { return { glyph: facGlyph(type), color: 'white' }; }
+  function facSpec(type) { var o = icons.facility[type] || {}, d = facDefault(type); return { glyph: o.glyph || d.glyph, color: o.color || d.color }; }
+  // 설정 표를 GROUPS 의 shape·color 에 반영한다(그림 그리는 곳은 모두 g.shape, g.color 를 읽음)
+  function applyIcons() {
+    GROUPS.forEach(function (g) { var sp = diseaseSpec(g); g.shape = sp.shape; g.color = colorOf(sp.color); });
+  }
+  applyIcons();
 
   function today0() { var t = new Date(); t.setHours(0, 0, 0, 0); return t; }
   function daysAgo(iso) { return Math.round((today0() - new Date(iso + 'T00:00:00')) / 86400000); }
@@ -336,16 +442,19 @@
     types.forEach(function (t) {
       var list = byType[t], located = list.filter(function (f) { return f.lat != null && f.lng != null; });
       var li = el('li', 'fac-row');
+      var wrap = el('div', 'count-wrap' + (facOn(t) ? '' : ' off'));
       var b = el('button', 'count');
       b.type = 'button';
       b.setAttribute('aria-pressed', facOn(t) ? 'true' : 'false');
       b.title = (facOn(t) ? '지도에서 숨기기' : '지도에 표시하기') + '\n' + list.map(function (f) { return (f.name || t) + ': ' + (f.addr || '주소 없음'); }).join('\n') +
         (located.length < list.length ? '\n위치를 모르는 ' + (list.length - located.length) + '곳은 지도에 나오지 않습니다' : '');
-      b.appendChild(facIcon(22, t));
+      b.appendChild(el('span', 'ico-slot'));
       b.appendChild(el('span', 'name', t));
       b.appendChild(el('span', 'n', String(list.length)));
       b.addEventListener('click', function () { state.facShown[t] = !facOn(t); save(); render(); });
-      li.appendChild(b);
+      wrap.appendChild(b);
+      wrap.appendChild(iconButton('f', t, t, facIcon(22, t)));
+      li.appendChild(wrap);
       var go = el('button', 'fac-go', '위치');
       go.type = 'button';
       go.title = '지도를 ' + t + ' 위치로 옮깁니다';
@@ -356,6 +465,7 @@
       ul.appendChild(li);
     });
     $('facPanel').hidden = !types.length;
+    state.facTypes = types;
 
     // 오른쪽 '방역 자원' 한 줄 요약
     var parts = types.map(function (t) {
@@ -698,16 +808,17 @@
     var ul = $('counts');
     ul.textContent = '';
     GROUPS.forEach(function (g) {
-      var li = el('li');
+      var li = el('li', 'count-wrap' + (state.shown[g.id] ? '' : ' off'));
       var b = el('button', 'count' + (counts[g.id] ? '' : ' zero'));
       b.type = 'button';
       b.setAttribute('aria-pressed', state.shown[g.id] ? 'true' : 'false');
       b.title = state.shown[g.id] ? '지도에서 숨기기' : '지도에 표시하기';
-      b.appendChild(shapeIcon(g, 22));
+      b.appendChild(el('span', 'ico-slot'));
       b.appendChild(el('span', 'name', g.name));
       b.appendChild(el('span', 'n', String(counts[g.id])));
       b.addEventListener('click', function () { state.shown[g.id] = !state.shown[g.id]; save(); render(); });
       li.appendChild(b);
+      li.appendChild(iconButton('d', g.id, g.name, shapeIcon(g, 22)));
       ul.appendChild(li);
     });
 
@@ -749,6 +860,7 @@
 
     drawResources(data.resources);
     renderManualList(all);
+    if (pop.el) fillIconPop();
 
     var unloc = items.filter(function (it) { return it.lat == null; }).length;
     $('unlocated').textContent = unloc ? '위치를 아직 찾지 못한 ' + unloc + '건은 지도에서 빠지고 목록에만 나옵니다.' : '';
@@ -990,7 +1102,9 @@
   }
 
   function exportManual() {
-    var body = JSON.stringify({ format: 'dash-manual', version: 1, exported: new Date().toISOString(), items: state.manual }, null, 1);
+    // icons: 아이콘 설정(바꾼 값만). 이 칸이 없는 예전 파일도 그대로 가져올 수 있다
+    var body = JSON.stringify({ format: 'dash-manual', version: 1, exported: new Date().toISOString(), items: state.manual,
+      icons: { version: 1, disease: icons.disease, facility: icons.facility } }, null, 1);
     var url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
     var a = el('a');
     a.href = url;
@@ -1007,9 +1121,17 @@
     if (file.size > 1024 * 1024) { $('dlgErr').textContent = '파일이 너무 큽니다(1MB 이하).'; return; }
     var rd = new FileReader();
     rd.onload = function () {
-      var items;
-      try { items = (JSON.parse(rd.result) || {}).items; } catch (e) { items = null; }
+      var items, obj, ic = null;
+      try { obj = JSON.parse(rd.result) || {}; items = obj.items; } catch (e) { items = null; }
+      if (obj && obj.icons && typeof obj.icons === 'object') ic = cleanIcons(obj.icons);
+      if (!Array.isArray(items) && ic) items = [];
       if (!Array.isArray(items)) { $('dlgErr').textContent = '이 현황판에서 내보낸 파일이 아닙니다.'; return; }
+      // 아이콘 설정은 파일에 바꾼 값이 있을 때만 이 PC 설정을 파일 내용으로 바꾼다
+      var icMsg = '';
+      if (ic && Object.keys(ic.disease).length + Object.keys(ic.facility).length) {
+        icons = ic; applyIcons(); saveIcons();
+        icMsg = ', 아이콘 설정 ' + iconCount() + '개 항목 적용';
+      }
       var added = 0, replaced = 0, skipped = 0;
       items.forEach(function (x) {
         var it;
@@ -1022,7 +1144,7 @@
       storeSave();
       render();
       openDialog(null);
-      $('dlgErr').textContent = '가져오기: 새 항목 ' + added + '건, 같은 항목 덮어쓰기 ' + replaced + '건' + (skipped ? ', 건너뜀 ' + skipped + '건' : '');
+      $('dlgErr').textContent = '가져오기: 새 항목 ' + added + '건, 같은 항목 덮어쓰기 ' + replaced + '건' + (skipped ? ', 건너뜀 ' + skipped + '건' : '') + icMsg;
     };
     rd.onerror = function () { $('dlgErr').textContent = '파일을 읽지 못했습니다.'; };
     rd.readAsText(file);
@@ -1052,6 +1174,211 @@
     $('manualCount').textContent = state.manual.length + '건';
     if (!state.manual.length) ol.appendChild(el('li', 'empty', '아직 입력한 항목이 없습니다'));
   }
+
+  // ---------------------------------------------------------------- 아이콘 바꾸기 창
+  // 왼쪽 목록의 아이콘을 누르면 열린다. 고르는 즉시 화면 전체에 반영하고 이 브라우저에 저장한다. Esc, 바깥 누르기로 닫는다.
+  var pop = { el: null, kind: null, key: null, name: null };
+
+  function iconButton(kind, key, name, icon) {
+    var b = el('button', 'ico-btn');
+    b.type = 'button';
+    b.dataset.iconKind = kind;
+    b.dataset.iconKey = key;
+    b.dataset.tip = '아이콘 바꾸기';
+    b.setAttribute('aria-label', name + ' 아이콘 바꾸기');
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.setAttribute('aria-expanded', pop.el && pop.kind === kind && pop.key === key ? 'true' : 'false');
+    b.appendChild(icon);
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pop.el && pop.kind === kind && pop.key === key) closeIconPop(true);
+      else openIconPop(kind, key, name, b);
+    });
+    return b;
+  }
+  function iconAnchor() {
+    var list = document.querySelectorAll('.ico-btn');
+    for (var i = 0; i < list.length; i++) if (list[i].dataset.iconKind === pop.kind && list[i].dataset.iconKey === pop.key) return list[i];
+    return null;
+  }
+
+  function openIconPop(kind, key, name, anchor) {
+    closeIconPop(false);
+    var box = el('div', 'icon-pop');
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', name + ' 아이콘 바꾸기');
+    box.tabIndex = -1;
+    pop = { el: box, kind: kind, key: key, name: name };
+    document.body.appendChild(box);
+    fillIconPop();
+    placeIconPop(anchor);
+    anchor.setAttribute('aria-expanded', 'true');
+    var first = box.querySelector('.ip-opt[aria-pressed="true"]') || box;
+    first.focus();
+  }
+  function placeIconPop(anchor) {
+    var r = anchor.getBoundingClientRect(), box = pop.el, gap = 10, vw = window.innerWidth, vh = window.innerHeight;
+    var w = box.offsetWidth, hgt = box.offsetHeight;
+    // 왼쪽 열 바로 오른쪽(지도 위)에 띄워 목록을 가리지 않는다. 자리가 없으면 아이콘 옆
+    var col = anchor.closest('.col'), cr = col ? col.getBoundingClientRect() : r;
+    var left = cr.right + gap;
+    if (left + w > vw - 8) left = r.right + gap;
+    if (left + w > vw - 8) left = Math.max(8, r.left - w - gap);
+    var top = Math.min(r.top - 12, vh - hgt - 8);
+    box.style.left = Math.max(8, Math.min(left, vw - w - 8)) + 'px';
+    box.style.top = Math.max(8, top) + 'px';
+  }
+  function closeIconPop(focusBack) {
+    if (!pop.el) return;
+    pop.el.remove();
+    var a = iconAnchor();
+    pop = { el: null, kind: null, key: null, name: null };
+    if (a) { a.setAttribute('aria-expanded', 'false'); if (focusBack) a.focus(); }
+  }
+
+  // 지금 고른 값, 기본값, 같은 아이콘을 쓰는 다른 항목
+  function popState() {
+    if (pop.kind === 'd') {
+      var g = GROUPS.filter(function (x) { return x.id === pop.key; })[0];
+      var cur = diseaseSpec(g), dup = GROUPS.filter(function (x) {
+        if (x === g) return false;
+        var o = diseaseSpec(x);
+        return o.shape === cur.shape && o.color === cur.color;
+      }).map(function (x) { return x.name; });
+      return { cur: cur, def: diseaseDefault(g), dup: dup, mapSize: g.core ? 22 : 14, g: g };
+    }
+    var t = pop.key, fc = facSpec(t);
+    var fdup = (state.facTypes || []).filter(function (x) {
+      if (x === t) return false;
+      var o = facSpec(x);
+      return o.glyph === fc.glyph && o.color === fc.color;
+    });
+    return { cur: fc, def: facDefault(t), dup: fdup, mapSize: 18 };
+  }
+  function drawSpec(kind, spec, size, faded) {
+    return kind === 'd' ? shapeIcon({ shape: spec.shape, color: colorOf(spec.color) }, size, faded) : facIconOf(size, spec);
+  }
+
+  function setIcon(patch) {
+    var ps = popState(), next = {}, def = ps.def, store = pop.kind === 'd' ? icons.disease : icons.facility;
+    Object.keys(ps.cur).forEach(function (k) { next[k] = k in patch ? patch[k] : ps.cur[k]; });
+    var diff = {};
+    Object.keys(next).forEach(function (k) { if (next[k] !== def[k]) diff[k] = next[k]; });
+    if (Object.keys(diff).length) store[pop.key] = diff; else delete store[pop.key];
+    afterIconChange();
+  }
+  function afterIconChange() {
+    var ok = saveIcons();
+    applyIcons();
+    if (!ok) flash('이 브라우저에 아이콘 설정을 저장하지 못했습니다. 화면을 새로 고치면 기본 아이콘으로 돌아갑니다.');
+    if (state.data) render(); else fillIconPop();
+    var a = iconAnchor();
+    if (a && pop.el) placeIconPop(a);
+  }
+
+  function fillIconPop() {
+    var box = pop.el, kind = pop.kind, ps = popState(), cur = ps.cur;
+    if (kind === 'f' && (state.facTypes || []).indexOf(pop.key) < 0 && state.facTypes) { closeIconPop(false); return; }
+    var keepFocus = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.opt : null;
+    box.textContent = '';
+
+    var head = el('div', 'ip-head');
+    head.appendChild(el('h3', null, pop.name + ' 아이콘'));
+    var x = el('button', 'ghost sm', '닫기');
+    x.type = 'button';
+    x.addEventListener('click', function () { closeIconPop(true); });
+    head.appendChild(x);
+    box.appendChild(head);
+
+    function section(title, list, field) {
+      var sec = el('div', 'ip-sec');
+      sec.appendChild(el('div', 'ip-lab', title));
+      var grid = el('div', 'ip-grid' + (field === 'color' ? ' cols5' : ''));
+      grid.setAttribute('role', 'group');
+      grid.setAttribute('aria-label', title);
+      list.forEach(function (o) {
+        var isDef = ps.def[field] === o.id;
+        var b = el('button', 'ip-opt' + (isDef ? ' is-def' : ''));
+        b.type = 'button';
+        b.dataset.opt = field + ':' + o.id;
+        var spec = {}; Object.keys(cur).forEach(function (k) { spec[k] = cur[k]; });
+        spec[field] = o.id;
+        b.appendChild(drawSpec(kind, spec, 22));
+        b.title = o.name + (isDef ? ' (기본값)' : '');
+        b.setAttribute('aria-label', title + ' ' + o.name + (isDef ? ', 기본값' : ''));
+        b.setAttribute('aria-pressed', cur[field] === o.id ? 'true' : 'false');
+        b.addEventListener('click', function () { var p = {}; p[field] = o.id; setIcon(p); });
+        grid.appendChild(b);
+      });
+      sec.appendChild(grid);
+      box.appendChild(sec);
+    }
+    section('모양', kind === 'd' ? D_SHAPES : F_GLYPHS, kind === 'd' ? 'shape' : 'glyph');
+    section('색', PALETTE, 'color');
+    box.appendChild(el('p', 'ip-note', '점선 칸이 처음 값입니다. 색각 이상이 있어도 구분되도록 색만 바꾸지 말고 모양도 다른 항목과 다르게 고르세요.'));
+
+    var prev = el('div', 'ip-prev');
+    function cell(label, size, cls, withFaded) {
+      var c = el('div', 'ip-cell');
+      var tile = el('div', 'ip-tile ' + cls);
+      tile.appendChild(drawSpec(kind, cur, size));
+      if (withFaded) tile.appendChild(drawSpec(kind, cur, size, true));
+      c.appendChild(tile);
+      c.appendChild(el('span', null, label));
+      prev.appendChild(c);
+    }
+    var fd = kind === 'd';
+    cell('목록', 22, 'dark', false);
+    cell('지도(어두운 곳)', ps.mapSize, 'dark', fd);
+    cell('지도(밝은 곳)', ps.mapSize, 'light', fd);
+    box.appendChild(prev);
+    if (fd) box.appendChild(el('p', 'ip-hint', '지도 미리보기의 오른쪽 흐린 표지는 30일이 지난 발생입니다.'));
+
+    var dup = el('p', 'ip-dup');
+    dup.setAttribute('role', 'status');
+    if (ps.dup.length) {
+      var last = ps.dup[ps.dup.length - 1];
+      dup.textContent = ps.dup.join(', ') + josa(last, '과', '와') + ' 같은 아이콘입니다. 지도에서 구분하기 어렵습니다.';
+    }
+    dup.hidden = !ps.dup.length;
+    box.appendChild(dup);
+
+    var act = el('div', 'ip-actions');
+    var isDefault = Object.keys(cur).every(function (k) { return cur[k] === ps.def[k]; });
+    var reset = el('button', 'ghost sm', '기본값으로');
+    reset.type = 'button';
+    reset.disabled = isDefault;
+    reset.title = '이 항목만 처음 아이콘으로 되돌립니다';
+    reset.addEventListener('click', function () { setIcon(ps.def); });
+    act.appendChild(reset);
+    box.appendChild(act);
+
+    var foot = el('div', 'ip-foot');
+    var all = el('button', 'ghost sm danger', '모든 아이콘 기본값으로');
+    all.type = 'button';
+    all.disabled = !iconCount();
+    all.addEventListener('click', function () {
+      if (!window.confirm('질병과 시설의 아이콘을 모두 처음 모양과 색으로 되돌릴까요?')) return;
+      icons = { disease: {}, facility: {} };
+      afterIconChange();
+    });
+    foot.appendChild(all);
+    foot.appendChild(el('span', 'muted', '이 PC 브라우저에 저장'));
+    box.appendChild(foot);
+
+    if (keepFocus) {
+      var again = box.querySelector('[data-opt="' + keepFocus + '"]');
+      if (again) again.focus();
+    } else if (!box.contains(document.activeElement)) box.focus();
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    if (!pop.el || pop.el.contains(e.target) || e.target.closest('.ico-btn')) return;
+    closeIconPop(false);
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && pop.el) { e.stopPropagation(); closeIconPop(true); }
+  }, true);
 
   function load() {
     return fetch('api/outbreaks', { cache: 'no-store' })
@@ -1106,6 +1433,8 @@
     rt = setTimeout(function () {
       if (state.map) state.map.invalidateSize();
       if (state.data) render();
+      var a = pop.el && iconAnchor();
+      if (a) placeIconPop(a); else if (pop.el) closeIconPop(false);
     }, 200);
   });
   tick(); setInterval(tick, 10000);
