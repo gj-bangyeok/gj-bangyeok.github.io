@@ -8,6 +8,7 @@
 <title>가축방역 상황실</title>
 <link rel="stylesheet" href="vendor/leaflet.css">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:,">
 </head>
 <body>
 <header class="top">
@@ -19,7 +20,7 @@
     </div>
   </div>
   <div class="controls">
-    <button type="button" id="manualBtn" class="manual-btn" hidden>수기 입력</button>
+    <button type="button" id="manualBtn" class="manual-btn" title="공공데이터에 아직 없는 발생을 이 PC에 직접 입력">발생 입력</button>
     <div class="periods" id="periods" role="group" aria-label="조회 기간">
       <button type="button" data-days="30">30일</button>
       <button type="button" data-days="90">90일</button>
@@ -33,6 +34,11 @@
 </header>
 
 <div id="notice" class="notice" role="status" hidden></div>
+<div id="pickBar" class="pickbar" hidden>
+  <span>지도에서 발생 위치를 누르세요. 표지는 끌어서 옮길 수 있습니다.</span>
+  <button type="button" class="ghost" id="pickCancel">취소</button>
+  <button type="button" class="primary" id="pickOk" disabled>이 위치로 정하기</button>
+</div>
 
 <main class="board">
   <aside class="col">
@@ -98,9 +104,9 @@
         <li><i class="ring r3"></i>10km 예찰지역</li>
         <li><i class="ring home"></i>시청 50km 기준선</li>
         <li id="facLegend" hidden><i class="fac-key"></i>거점소독시설</li>
-        <li><i class="manual-key">수기</i>담당자 직접 입력</li>
+        <li><i class="manual-key">수기</i>직접 입력</li>
       </ul>
-      <p class="hint">방역대는 최근 30일 안에 발생해 아직 종식되지 않은 주요 질병에만 그립니다. 주소가 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
+      <p class="hint">방역대는 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다. 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
       <p class="hint" id="unlocated"></p>
       <p class="hint" id="source"></p>
     </section>
@@ -112,7 +118,8 @@
       <h2 id="dlgTitle">발생 수기 입력</h2>
       <button type="button" class="ghost" data-close>닫기</button>
     </div>
-    <p class="dlg-warn">개인정보는 넣지 마세요. 이 내용은 공개 주소에도 표시됩니다. 농장명, 농장주 이름, 연락처는 적지 않습니다.</p>
+    <p class="dlg-warn">이 PC의 브라우저에만 저장되며 외부로 전송되지 않습니다. 다른 PC 화면에는 보이지 않습니다. 농장주 이름, 연락처 같은 개인정보는 적지 마세요.</p>
+    <p class="dlg-warn err" id="storeWarn" hidden>이 브라우저에서는 저장할 수 없습니다(사생활 보호 모드 등). 입력한 내용은 화면을 새로 고치면 사라집니다.</p>
     <div class="fgrid">
       <label>질병
         <select name="disease_key" required>
@@ -135,17 +142,8 @@
       <label>종료일 <small>선택</small>
         <input type="date" name="end">
       </label>
-      <label>시도
-        <select name="sido" required></select>
-      </label>
-      <label>시군구
-        <input name="sigungu" maxlength="20" autocomplete="off" placeholder="예: 경주시">
-      </label>
-      <label>읍면동
-        <input name="emd" maxlength="20" autocomplete="off" placeholder="예: 안강읍">
-      </label>
-      <label>리 <small>선택</small>
-        <input name="ri" maxlength="20" autocomplete="off" placeholder="예: 산대리">
+      <label class="wide">주소 <small>읍면동이나 리까지, 번지는 적지 않아도 됩니다</small>
+        <input name="addr" maxlength="60" autocomplete="off" placeholder="예: 경상북도 경주시 안강읍 산대리">
       </label>
       <label>축종
         <input name="species" maxlength="20" list="speciesList" autocomplete="off" placeholder="예: 소-한우">
@@ -159,8 +157,8 @@
     </div>
     <div class="pick">
       <span id="pickText"></span>
-      <button type="button" class="ghost" id="pickBtn">지도에서 위치 찍기</button>
-      <button type="button" class="ghost" id="pickClear" hidden>찍은 위치 지우기</button>
+      <button type="button" class="ghost" id="pickBtn">지도에서 위치 지정</button>
+      <button type="button" class="ghost" id="pickClear" hidden>위치 지우기</button>
     </div>
     <p class="dlg-err" id="dlgErr" role="alert"></p>
     <div class="dlg-actions">
@@ -170,7 +168,14 @@
     </div>
   </form>
   <section class="dlg-list">
-    <h3>입력한 항목 <span class="muted" id="manualCount"></span></h3>
+    <div class="dlg-list-head">
+      <h3>이 PC에 입력한 항목 <span class="muted" id="manualCount"></span></h3>
+      <div class="io">
+        <button type="button" class="ghost sm" id="exportBtn">내보내기</button>
+        <button type="button" class="ghost sm" id="importBtn">가져오기</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden>
+      </div>
+    </div>
     <ol id="manualList"></ol>
   </section>
   <datalist id="speciesList">

@@ -14,6 +14,7 @@
     { id: 'bru', name: '브루셀라', token: '--d-bru', shape: 'dot', core: false, match: ['브루셀라'] },
     { id: 'etc', name: '기타 전염병', token: '--d-etc', shape: 'dot', core: false, match: [] }
   ];
+  var HOME_GUESS_KM = 15;      // 시군 이름 없이 입력한 수기 주소를 관내로 볼 시청 거리
   var ZONE_DAYS = 30;          // 방역대와 경보 단계를 보는 기간
   var WATCH_KM = 50;           // 주의: 도내 또는 50km 안
   var ALERT_KM = 10;           // 비상: 관내 또는 10km 안
@@ -22,7 +23,7 @@
   var SVGNS = 'http://www.w3.org/2000/svg';
 
   var state = { days: 30, shown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
-    writable: false, manual: [], editId: null, pick: null, picking: false };
+    manual: [], storeOk: true, editId: null, pick: null, picking: false, pickMarker: null, flash: null };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
@@ -81,7 +82,7 @@
 
   // 거점소독시설 표지: 질병 표지와 겹치지 않게 테두리 있는 사각형 안의 십자
   function facIcon(size) {
-    var s = size, box = svg('svg', { width: s, height: s, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
+    var box = svg('svg', { width: size, height: size, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
     box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: token('--fac'), 'stroke-width': 2 }));
     box.appendChild(svg('path', { d: 'M11 6v10M6 11h10', stroke: token('--fac'), 'stroke-width': 2.6, 'stroke-linecap': 'round' }));
     return box;
@@ -126,9 +127,10 @@
     }).addTo(state.map);
     state.facLayer = L.layerGroup().addTo(state.map);
     state.layer = L.layerGroup().addTo(state.map);
-    state.map.on('click', function (e) { if (state.picking) finishPick(e.latlng); });
+    state.map.on('click', function (e) { if (state.picking) placePick(e.latlng); });
   }
 
+  // ---------------------------------------------------------------- 방역 자원
   function drawResources(res) {
     var fac = (res && res.facilities) || [], veh = (res && res.vehicles) || [];
     state.facLayer.clearLayers();
@@ -148,7 +150,7 @@
     var parts = [];
     if (fac.length) {
       var unloc = fac.filter(function (f) { return f.lat == null; }).length;
-      parts.push('거점소독시설 ' + fac.length + '곳' + (unloc ? ' (' + unloc + '곳 위치 미확인)' : ''));
+      parts.push('거점소독시설 ' + fac.length + '곳' + (unloc ? '(지도 ' + (fac.length - unloc) + '곳)' : ''));
     }
     if (veh.length) {
       parts.push('소독차량 ' + veh.map(function (v) {
@@ -172,8 +174,8 @@
       it.farm ? '농장 ' + it.farm : '',
       it.km != null ? '시청에서 ' + fmtKm(it.km) : '',
       it.geo === 'area' ? '읍면동 중심 좌표라 실제 위치와 다를 수 있습니다' : '',
-      it.geo === 'manual' ? '담당자가 지도에서 찍은 위치입니다' : '',
-      it.source === 'manual' ? '수기 입력 (공공데이터 반영 전)' + (it.memo ? ': ' + it.memo : '') : ''
+      it.source === 'manual' ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
+      it.memo ? '메모: ' + it.memo : ''
     ];
     lines.filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
     return box;
@@ -335,7 +337,9 @@
     var r = el(hasPos ? 'button' : 'div', 'row');
     if (hasPos) r.type = 'button';
     r.appendChild(shapeIcon(it.g, 18));
-    r.appendChild(el('span', 't', label(it)));
+    var t = el('span', 't', label(it));
+    if (it.source === 'manual') { t.appendChild(document.createTextNode(' ')); t.appendChild(el('span', 'mtag', '수기')); }
+    r.appendChild(t);
     r.appendChild(right);
     var a = el('span', 'a');
     parts.filter(Boolean).forEach(function (p) { a.appendChild(typeof p === 'string' ? el('span', null, p) : p); });
@@ -349,19 +353,19 @@
       });
     }
     li.appendChild(r);
-    if (it.source === 'manual' && state.writable && withActions) li.appendChild(manualActions(it));
+    if (it.source === 'manual' && withActions) li.appendChild(manualActions(it));
     return li;
   }
 
   function manualActions(it) {
     var box = el('div', 'mact');
-    if (it.api_match) box.appendChild(el('span', 'tag', 'API 반영됨, 수기 삭제 권장'));
+    if (it.api_match) box.appendChild(el('span', 'tag', '공공데이터에 반영됨'));
     var e = el('button', 'ghost sm', '수정');
     e.type = 'button';
     e.addEventListener('click', function () { openDialog(it.id); });
     var d = el('button', 'ghost sm danger', '삭제');
     d.type = 'button';
-    d.addEventListener('click', function () { removeManual(it.id, it.disease + ' ' + it.addr); });
+    d.addEventListener('click', function () { removeManual(it.id); });
     box.appendChild(e);
     box.appendChild(d);
     return box;
@@ -423,18 +427,22 @@
     var data = state.data;
     if (!data) return;
     var home = data.home;
-    var all = (data.items || []).map(function (it) {
+    var all = (data.items || []).concat(manualItems()).map(function (it) {
       it.g = groupOf(it.disease);
       it.ago = daysAgo(it.date);
       it.addr = it.addr || '';
       it.km = it.lat != null && it.lng != null ? km(home.lat, home.lng, it.lat, it.lng) : null;
       return it;
     }).filter(function (it) { return it.ago >= 0; });
+    markApiMatch(all);
+    all.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     var items = all.filter(function (it) { return it.ago < state.days; });
 
     var rs = regionShortOf(home.region);
-    function inHome(it) { return it.addr.indexOf(home.name) >= 0; }
-    function inRegion(it) { return it.addr.indexOf(home.region) >= 0 || it.addr.indexOf(rs + ' ') === 0; }
+    // 수기 주소에 시군 이름이 없으면(예: "안강읍 산대리") 찍은 위치로 관내를 짐작한다
+    function noCity(it) { return it.source === 'manual' && !/(^|\s)\S+(시|군)(\s|$)/.test(it.addr); }
+    function inHome(it) { return it.addr.indexOf(home.name) >= 0 || (noCity(it) && it.km != null && it.km <= HOME_GUESS_KM); }
+    function inRegion(it) { return it.addr.indexOf(home.region) >= 0 || it.addr.indexOf(rs + ' ') === 0 || inHome(it); }
 
     renderStatus(all, home, inHome, inRegion);
 
@@ -493,8 +501,7 @@
     recent.textContent = '';
     shown.slice(0, 40).forEach(function (it) {
       var tag = it.lat == null ? el('span', 'tag', '위치 미확인') : null;
-      var mtag = it.source === 'manual' ? el('span', 'mtag', '수기') : null;
-      recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [mtag, it.addr, it.species, tag], null, true));
+      recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [it.addr, it.species, tag], null, true));
     });
     $('recentCount').textContent = shown.length > 40 ? shown.length + '건 중 40건' : shown.length + '건';
     if (!shown.length) recent.appendChild(el('li', 'empty', '선택한 기간과 질병에 해당하는 발생이 없습니다'));
@@ -511,7 +518,7 @@
     var near = $('nearest');
     near.textContent = '';
     core.slice(0, 4).forEach(function (it) {
-      near.appendChild(row(it, el('span', 'km', fmtKm(it.km)), [it.source === 'manual' ? el('span', 'mtag', '수기') : null, it.addr], shortDate(it.date)));
+      near.appendChild(row(it, el('span', 'km', fmtKm(it.km)), [it.addr], shortDate(it.date)));
     });
     if (!core.length) {
       var anyCore = items.some(function (it) { return it.g.core; });
@@ -521,46 +528,130 @@
     }
 
     drawResources(data.resources);
-    if (state.writable) renderManualList();
+    renderManualList(all);
 
     var unloc = items.filter(function (it) { return it.lat == null; }).length;
     $('unlocated').textContent = unloc ? '위치를 아직 찾지 못한 ' + unloc + '건은 지도에서 빠지고 목록에만 나옵니다.' : '';
   }
 
-  // ---------------------------------------------------------------- 수기 입력 (이 컴퓨터의 화면에서만)
-  var SIDO = ['서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시', '대전광역시', '울산광역시',
-    '세종특별자치시', '경기도', '강원특별자치도', '충청북도', '충청남도', '전북특별자치도', '전라남도',
-    '경상북도', '경상남도', '제주특별자치도'];
-  var KEY_OF = { '구제역': 'fmd', '고병원성조류인플루엔자': 'hpai', '아프리카돼지열병': 'asf', '럼피스킨병': 'lsd', '결핵병': 'tb', '브루셀라병': 'bru' };
-  var LOCAL = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+  // ---------------------------------------------------------------- 수기 입력 (이 PC의 브라우저에만 저장)
+  // 공공데이터에 아직 안 올라온 발생을 담당자가 먼저 넣는다. 서버나 외부로 아무것도 보내지 않는다.
+  var STORE_KEY = 'dash-manual';
+  var MANUAL_MAX = 500;
+  var DISEASE_OF = { fmd: '구제역', hpai: '고병원성조류인플루엔자', asf: '아프리카돼지열병', lsd: '럼피스킨병', tb: '결핵병', bru: '브루셀라병' };
+  var CORE_WORDS = ['구제역', '고병원성', '아프리카돼지열병', '럼피스킨', '결핵', '브루셀라'];
+  var PHONE = /(01[016789]|0\d{1,2})[-. ]?\d{3,4}[-. ]?\d{4}/;
 
-  function initManual() {
-    if (!LOCAL) return; // 공개본(깃허브 페이지)에서는 입력 기능을 아예 켜지 않음
-    fetch('api/status', { cache: 'no-store' })
-      .then(function (r) { return r.ok ? r.json() : {}; })
-      .then(function (st) {
-        if (st.writable !== true) return;
-        state.writable = true;
-        setupDialog();
-        $('manualBtn').hidden = false;
-        loadManual();
-      })
-      .catch(function () { /* 상태를 못 받으면 조회 전용 */ });
+  function storeLoad() {
+    try {
+      localStorage.setItem('dash-test', '1');
+      localStorage.removeItem('dash-test');
+      var raw = JSON.parse(localStorage.getItem(STORE_KEY) || '{"items":[]}');
+      state.manual = (raw.items || []).map(function (x) { try { return checkItem(x, true); } catch (e) { return null; } }).filter(Boolean);
+      state.storeOk = true;
+    } catch (e) {
+      state.storeOk = false;
+    }
+  }
+  function storeSave() {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify({ version: 1, items: state.manual }));
+      state.storeOk = true;
+    } catch (e) {
+      state.storeOk = false;
+    }
+    $('storeWarn').hidden = state.storeOk;
+    return state.storeOk;
   }
 
-  function loadManual() {
-    return fetch('api/manual', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (j) { state.manual = j.items || []; renderManualList(); if (state.data) render(); })
-      .catch(function () { /* 다음에 다시 */ });
+  function newId() {
+    var b = new Uint8Array(3);
+    (window.crypto || {}).getRandomValues ? crypto.getRandomValues(b) : b.forEach(function (_, i) { b[i] = Math.random() * 256; });
+    return 'M-' + Date.now().toString(36) + '-' + Array.prototype.map.call(b, function (x) { return pad16(x); }).join('');
+  }
+  function pad16(x) { return (x < 16 ? '0' : '') + x.toString(16); }
+
+  // 입력값 검사. 화면 입력과 가져오기에 똑같이 쓴다. 틀리면 Error(안내 문구)
+  function checkItem(x, loose) {
+    if (!x || typeof x !== 'object') throw new Error('형식이 올바르지 않습니다.');
+    function text(k, label, max, required) {
+      var v = x[k] == null ? '' : x[k];
+      if (typeof v !== 'string' && typeof v !== 'number') throw new Error(label + ' 값이 올바르지 않습니다.');
+      v = String(v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (required && !v) throw new Error(label + josa(label, '을', '를') + ' 입력해 주세요.');
+      if (v.length > max) throw new Error(label + josa(label, '은', '는') + ' ' + max + '자 이내로 입력해 주세요.');
+      if (PHONE.test(v) || PHONE.test(v.replace(/\s/g, ''))) throw new Error(label + '에 전화번호로 보이는 숫자가 있습니다. 개인정보는 적지 마세요.');
+      return v;
+    }
+    function date(k, label, required) {
+      var v = x[k] || '';
+      if (!v) { if (required) throw new Error(label + josa(label, '을', '를') + ' 입력해 주세요.'); return null; }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || isoOf(new Date(v + 'T00:00:00')) !== v) throw new Error(label + josa(label, '이', '가') + ' 올바른 날짜가 아닙니다.');
+      if (!loose && v > isoOf(new Date())) throw new Error(label + josa(label, '이', '가') + ' 오늘보다 뒤입니다.');
+      return v;
+    }
+    var key = x.disease_key;
+    if (!(key in DISEASE_OF) && key !== 'etc') throw new Error('질병을 목록에서 골라 주세요.');
+    var disease = DISEASE_OF[key];
+    if (key === 'etc') {
+      disease = text(x.disease_text != null ? 'disease_text' : 'disease', '질병명', 30, true);
+      if (CORE_WORDS.some(function (w) { return disease.indexOf(w) >= 0; })) throw new Error('이 질병은 목록에서 골라 주세요.');
+    }
+    var d = date('date', '발생일', true), end = date('end', '종료일', false);
+    if (end && end < d) throw new Error('종료일이 발생일보다 앞섭니다.');
+    var count = x.count == null || x.count === '' ? null : Number(String(x.count).replace(/,/g, ''));
+    if (count != null && !(Number.isInteger(count) && count >= 0 && count <= 10000000)) throw new Error('두수는 0 이상의 정수로 입력해 주세요.');
+    var lat = x.lat == null || x.lat === '' ? null : Number(x.lat), lng = x.lng == null || x.lng === '' ? null : Number(x.lng);
+    if ((lat == null) !== (lng == null) || (lat != null && !(lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 132))) throw new Error('지정한 위치가 국내 범위를 벗어났습니다.');
+    return {
+      id: typeof x.id === 'string' && /^M-[0-9a-z]{6,12}-[0-9a-f]{6}$/.test(x.id) ? x.id : newId(),
+      disease_key: key, disease: disease, date: d, end: end,
+      addr: text('addr', '주소', 60, true), species: text('species', '축종', 20, true),
+      count: count, memo: text('memo', '메모', 200, false),
+      lat: lat == null ? null : Math.round(lat * 1e6) / 1e6, lng: lng == null ? null : Math.round(lng * 1e6) / 1e6,
+      created: typeof x.created === 'string' ? x.created.slice(0, 25) : new Date().toISOString(),
+      updated: typeof x.updated === 'string' ? x.updated.slice(0, 25) : null
+    };
+  }
+
+  // 화면 자료 형태로 바꾼다 (API 자료와 같은 칸)
+  function manualItems() {
+    return state.manual.map(function (m) {
+      return { id: m.id, disease: m.disease, farm: '', addr: m.addr, date: m.date, species: m.species, count: m.count,
+        agency: '', end: m.end, lat: m.lat, lng: m.lng, geo: m.lat == null ? null : 'manual', source: 'manual', memo: m.memo };
+    });
+  }
+
+  // 읍면동 글자 (예: "경상북도 경주시 안강읍 산대리" → 시군 "경주시", 읍면동 "안강읍")
+  function areaOf(addr) {
+    var t = (addr || '').split(/\s+/), city = null, emd = null;
+    t.forEach(function (w) {
+      if (!emd && /(시|군)$/.test(w) && !/(특별시|광역시|특별자치시)$/.test(w)) city = w;
+      else if (!emd && /(읍|면|동|가)$/.test(w) && !/(시|군|구)$/.test(w)) emd = w;
+    });
+    return { city: city, emd: emd };
+  }
+  // 같은 질병, 발생일 ±3일, 3km 이내 또는 같은 읍면동의 API 건이 있으면 표시만 한다(자동 삭제 없음)
+  function markApiMatch(all) {
+    var api = all.filter(function (it) { return it.source !== 'manual'; });
+    all.forEach(function (m) {
+      if (m.source !== 'manual') return;
+      var a0 = areaOf(m.addr), t0 = new Date(m.date + 'T00:00:00').getTime();
+      m.api_match = api.some(function (a) {
+        if (a.g !== m.g || (m.g.id === 'etc' && a.disease.replace(/\s/g, '') !== m.disease.replace(/\s/g, ''))) return false;
+        if (Math.abs(new Date(a.date + 'T00:00:00').getTime() - t0) > 3 * 86400000) return false;
+        if (m.lat != null && a.lat != null && km(m.lat, m.lng, a.lat, a.lng) <= 3) return true;
+        var a1 = areaOf(a.addr);
+        return !!a0.emd && a0.emd === a1.emd && (!a0.city || !a1.city || a0.city === a1.city);
+      });
+    });
   }
 
   function form() { return $('manualForm'); }
-  function fval(name) { return form().elements[name].value; }
 
-  function setupDialog() {
-    var sel = form().elements.sido;
-    SIDO.forEach(function (n) { var o = el('option', null, n); o.value = n; sel.appendChild(o); });
+  function setupManual() {
+    storeLoad();
+    $('storeWarn').hidden = state.storeOk;
     form().elements.disease_key.addEventListener('change', syncEtc);
     form().addEventListener('submit', function (e) { e.preventDefault(); submitManual(); });
     Array.prototype.forEach.call($('manualDlg').querySelectorAll('[data-close]'), function (b) {
@@ -570,36 +661,44 @@
     $('dlgNew').addEventListener('click', function () { openDialog(null); });
     $('pickBtn').addEventListener('click', startPick);
     $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); });
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.picking) cancelPick(); });
+    $('pickOk').addEventListener('click', function () {
+      if (state.pickMarker) { var ll = state.pickMarker.getLatLng(); state.pick = { lat: ll.lat, lng: ll.lng }; }
+      endPick();
+    });
+    $('pickCancel').addEventListener('click', endPick);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.picking) endPick(); });
+    $('exportBtn').addEventListener('click', exportManual);
+    $('importBtn').addEventListener('click', function () { $('importFile').value = ''; $('importFile').click(); });
+    $('importFile').addEventListener('change', importManual);
   }
 
-  function syncEtc() { $('etcWrap').hidden = fval('disease_key') !== 'etc'; }
+  function syncEtc() { $('etcWrap').hidden = form().elements.disease_key.value !== 'etc'; }
   function syncPick() {
     var p = state.pick;
     $('pickText').textContent = p
-      ? '지도에서 찍은 위치: ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
-      : '위치는 주소로 찾습니다. 못 찾으면 위치 미확인으로 두고, 지도에서 직접 찍을 수 있습니다.';
+      ? '지정한 위치: ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
+      : '위치를 지정하지 않으면 위치 미확인으로 목록과 건수에만 들어갑니다.';
     $('pickClear').hidden = !p;
   }
 
   function openDialog(id) {
-    var f = form(), it = id ? state.manual.filter(function (x) { return x.id === id; })[0] : null;
+    var f = form(), m = id ? state.manual.filter(function (x) { return x.id === id; })[0] : null;
     f.reset();
-    state.editId = it ? it.id : null;
-    state.pick = it && it.geo === 'manual' ? { lat: it.lat, lng: it.lng } : null;
-    $('dlgTitle').textContent = it ? '수기 입력 수정' : '발생 수기 입력';
-    $('dlgSave').textContent = it ? '고친 내용 저장' : '저장';
-    $('dlgNew').hidden = !it;
+    state.editId = m ? m.id : null;
+    state.pick = m && m.lat != null ? { lat: m.lat, lng: m.lng } : null;
+    $('dlgTitle').textContent = m ? '수기 입력 수정' : '발생 수기 입력';
+    $('dlgSave').textContent = m ? '고친 내용 저장' : '저장';
+    $('dlgNew').hidden = !m;
     $('dlgErr').textContent = '';
-    if (it) {
-      ['disease_key', 'date', 'sido', 'sigungu', 'emd', 'ri', 'species', 'memo'].forEach(function (k) { f.elements[k].value = it[k] || ''; });
-      f.elements.disease_text.value = it.disease_key === 'etc' ? it.disease : '';
-      f.elements.end.value = it.end || '';
-      f.elements.count.value = it.count == null ? '' : it.count;
+    if (m) {
+      ['disease_key', 'date', 'addr', 'species', 'memo'].forEach(function (k) { f.elements[k].value = m[k] || ''; });
+      f.elements.disease_text.value = m.disease_key === 'etc' ? m.disease : '';
+      f.elements.end.value = m.end || '';
+      f.elements.count.value = m.count == null ? '' : m.count;
     } else {
       f.elements.date.value = isoOf(new Date());
-      f.elements.sido.value = (state.data && state.data.home.region) || '경상북도';
-      f.elements.sigungu.value = (state.data && state.data.home.name) || '';
+      var h = state.data && state.data.home;
+      f.elements.addr.value = h ? h.region + ' ' + h.name + ' ' : '';
     }
     f.elements.date.max = isoOf(new Date());
     f.elements.end.max = isoOf(new Date());
@@ -610,92 +709,124 @@
   }
 
   function startPick() {
+    if (!state.map) return;
     state.picking = true;
     $('manualDlg').close();
+    $('pickBar').hidden = false;
+    $('pickOk').disabled = true;
     document.body.classList.add('picking');
-    var n = $('notice');
-    n.hidden = false; n.className = 'notice warn';
-    n.textContent = '지도에서 발생 위치를 누르세요. 그만두려면 Esc 를 누르세요.';
+    if (state.pick) { placePick(state.pick); state.map.setView([state.pick.lat, state.pick.lng], Math.max(state.map.getZoom(), 11)); }
+  }
+  function placePick(ll) {
+    if (!state.pickMarker) {
+      var icon = el('div', 'pick-pin');
+      state.pickMarker = L.marker(ll, {
+        draggable: true, zIndexOffset: 3000, title: '끌어서 위치 조정', alt: '지정할 위치',
+        icon: L.divIcon({ className: '', html: icon, iconSize: [26, 26], iconAnchor: [13, 13] })
+      }).addTo(state.map);
+    } else {
+      state.pickMarker.setLatLng(ll);
+    }
+    $('pickOk').disabled = false;
   }
   function endPick() {
     state.picking = false;
+    if (state.pickMarker) { state.map.removeLayer(state.pickMarker); state.pickMarker = null; }
+    $('pickBar').hidden = true;
     document.body.classList.remove('picking');
-    render();
+    syncPick();
     $('manualDlg').showModal();
-  }
-  function finishPick(ll) { state.pick = { lat: ll.lat, lng: ll.lng }; syncPick(); endPick(); }
-  function cancelPick() { endPick(); }
-
-  function api(method, path, body) {
-    return fetch(path, {
-      method: method, cache: 'no-store',
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) {
-        if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-        return j;
-      });
-    });
   }
 
   function submitManual() {
     var f = form(), body = {};
-    ['disease_key', 'disease_text', 'date', 'end', 'sido', 'sigungu', 'emd', 'ri', 'species', 'count', 'memo'].forEach(function (k) {
-      body[k] = f.elements[k].value.trim();
-    });
+    ['disease_key', 'disease_text', 'date', 'end', 'addr', 'species', 'count', 'memo'].forEach(function (k) { body[k] = f.elements[k].value.trim(); });
     if (state.pick) { body.lat = state.pick.lat; body.lng = state.pick.lng; }
-    var err = !body.disease_key ? '질병을 골라 주세요.'
-      : body.disease_key === 'etc' && !body.disease_text ? '질병명을 입력해 주세요.'
-      : !body.date ? '발생일을 입력해 주세요.'
-      : !body.emd ? '읍면동을 입력해 주세요.'
-      : !body.species ? '축종을 입력해 주세요.' : '';
-    $('dlgErr').textContent = err;
-    if (err) return;
-    var btn = $('dlgSave');
-    btn.disabled = true;
-    $('dlgErr').textContent = state.pick ? '저장하는 중입니다.' : '저장하는 중입니다. 주소를 좌표로 바꾸느라 몇 초 걸릴 수 있습니다.';
-    var id = state.editId;
-    api(id ? 'PUT' : 'POST', id ? 'api/manual/' + id : 'api/manual', body)
-      .then(function (j) {
-        $('manualDlg').close();
-        flash(j.item.lat == null ? '저장했습니다. 주소의 위치를 찾지 못해 위치 미확인으로 두었습니다. 수정에서 지도로 위치를 찍을 수 있습니다.' : '저장했습니다.');
-        return Promise.all([loadManual(), load()]);
-      })
-      .catch(function (e) { $('dlgErr').textContent = e.message; })
-      .then(function () { btn.disabled = false; });
+    var old = state.editId ? state.manual.filter(function (x) { return x.id === state.editId; })[0] : null;
+    if (old) { body.id = old.id; body.created = old.created; body.updated = new Date().toISOString(); }
+    var item;
+    try { item = checkItem(body, false); } catch (e) { $('dlgErr').textContent = e.message; return; }
+    if (old) state.manual = state.manual.map(function (x) { return x.id === old.id ? item : x; });
+    else {
+      if (state.manual.length >= MANUAL_MAX) { $('dlgErr').textContent = '수기 항목이 너무 많습니다. 오래된 항목을 지워 주세요.'; return; }
+      state.manual.push(item);
+    }
+    var ok = storeSave();
+    $('manualDlg').close();
+    flash(!ok ? '이 브라우저에 저장하지 못했습니다. 화면을 새로 고치면 입력한 내용이 사라집니다.'
+      : item.lat == null ? '저장했습니다. 위치를 지정하지 않아 지도에는 나오지 않습니다.' : '저장했습니다.');
+    render();
   }
 
-  function removeManual(id, what) {
-    if (!window.confirm('수기 입력 항목을 지울까요?\n' + what)) return;
-    api('DELETE', 'api/manual/' + id)
-      .then(function () { flash('수기 입력 항목을 지웠습니다.'); if (state.editId === id) openDialog(null); return Promise.all([loadManual(), load()]); })
-      .catch(function (e) { window.alert('지우지 못했습니다: ' + e.message); });
+  function removeManual(id) {
+    var m = state.manual.filter(function (x) { return x.id === id; })[0];
+    if (!m || !window.confirm('수기 입력 항목을 지울까요?\n' + m.disease + ', ' + m.addr + ', ' + m.date)) return;
+    state.manual = state.manual.filter(function (x) { return x.id !== id; });
+    storeSave();
+    if (state.editId === id) state.editId = null;
+    flash('수기 입력 항목을 지웠습니다.');
+    render();
+    if ($('manualDlg').open) openDialog(null);
+  }
+
+  function exportManual() {
+    var body = JSON.stringify({ format: 'dash-manual', version: 1, exported: new Date().toISOString(), items: state.manual }, null, 1);
+    var url = URL.createObjectURL(new Blob([body], { type: 'application/json' }));
+    var a = el('a');
+    a.href = url;
+    a.download = '발생수기입력-' + isoOf(new Date()) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  function importManual() {
+    var file = $('importFile').files[0];
+    if (!file) return;
+    if (file.size > 1024 * 1024) { $('dlgErr').textContent = '파일이 너무 큽니다(1MB 이하).'; return; }
+    var rd = new FileReader();
+    rd.onload = function () {
+      var items;
+      try { items = (JSON.parse(rd.result) || {}).items; } catch (e) { items = null; }
+      if (!Array.isArray(items)) { $('dlgErr').textContent = '이 현황판에서 내보낸 파일이 아닙니다.'; return; }
+      var added = 0, replaced = 0, skipped = 0;
+      items.forEach(function (x) {
+        var it;
+        try { it = checkItem(x, true); } catch (e) { skipped++; return; }
+        var i = state.manual.map(function (m) { return m.id; }).indexOf(it.id);
+        if (i >= 0) { state.manual[i] = it; replaced++; }
+        else if (state.manual.length < MANUAL_MAX) { state.manual.push(it); added++; }
+        else skipped++;
+      });
+      storeSave();
+      render();
+      openDialog(null);
+      $('dlgErr').textContent = '가져오기: 새 항목 ' + added + '건, 같은 항목 덮어쓰기 ' + replaced + '건' + (skipped ? ', 건너뜀 ' + skipped + '건' : '');
+    };
+    rd.onerror = function () { $('dlgErr').textContent = '파일을 읽지 못했습니다.'; };
+    rd.readAsText(file);
   }
 
   var flashT = null;
   function flash(msg) {
     state.flash = { msg: msg, until: Date.now() + 8000 };
-    var n = $('notice');
-    n.hidden = false; n.className = 'notice'; n.textContent = msg;
     clearTimeout(flashT);
-    flashT = setTimeout(function () { if (state.data) render(); }, 8000);
+    flashT = setTimeout(function () { if (state.data) render(); }, 8100);
   }
 
-  function renderManualList() {
+  function renderManualList(all) {
     var ol = $('manualList');
-    if (!ol) return;
     ol.textContent = '';
-    var byId = {};
-    ((state.data && state.data.items) || []).forEach(function (it) { if (it.source === 'manual') byId[it.id] = it; });
+    if (all) { state.match = {}; all.forEach(function (it) { if (it.source === 'manual') state.match[it.id] = it.api_match; }); }
+    var match = state.match || {};
     state.manual.slice().sort(function (a, b) { return a.date < b.date ? 1 : -1; }).forEach(function (m) {
       var li = el('li', state.editId === m.id ? 'on' : null);
       var line = el('div', 'ml');
       line.appendChild(el('b', null, m.disease));
       line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species + (m.lat == null ? ' · 위치 미확인' : '')));
       li.appendChild(line);
-      var pub = byId[m.id] || {};
-      li.appendChild(manualActions({ id: m.id, disease: m.disease, addr: m.addr, api_match: pub.api_match }));
+      li.appendChild(manualActions({ id: m.id, api_match: match[m.id] }));
       ol.appendChild(li);
     });
     $('manualCount').textContent = state.manual.length + '건';
@@ -706,7 +837,7 @@
     return fetch('api/outbreaks', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (data) {
-        if (state.picking) return; // 위치를 찍는 동안에는 화면을 다시 그리지 않음
+        if (state.picking) return; // 위치를 지정하는 동안에는 화면을 다시 그리지 않음
         if (!data.home) { // 서버가 첫 자료를 받는 중
           var n = $('notice');
           n.hidden = false; n.className = 'notice'; n.textContent = data.message || '자료를 받는 중입니다.';
@@ -745,6 +876,6 @@
     }, 200);
   });
   tick(); setInterval(tick, 10000);
+  setupManual();
   load(); setInterval(load, REFRESH_MS);
-  initManual();
 })();
