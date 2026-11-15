@@ -5,16 +5,18 @@ body.stats-page {
   min-height: 100%;
   overflow-y: auto;
   font-size: 15px;
-  --bar: #7aa7d9;
-  --bar-dim: #4d6b8c;
-  --row-alt: rgba(233, 238, 243, 0.03);
-  --row-hover: rgba(233, 238, 243, 0.06);
+  --bar: #4a7fc6;
+  --bar-dim: #a9c1e2;
+  --bar-hover: #1f4f9a;
+  --row-alt: rgba(28, 34, 40, 0.025);
+  --row-hover: rgba(36, 89, 194, 0.06);
 }
 .stats-page .top { position: sticky; top: 0; z-index: 10; padding: 12px 24px; }
 .st-title { flex: 1; min-width: 0; }
 .st-title h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
 .stats-page .subline { font-size: 14px; color: var(--muted); margin-top: 2px; }
 .top .nav-link { color: var(--text); }
+.stats-page .st-body { background: var(--bg); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 .st-main {
@@ -50,7 +52,7 @@ body.stats-page {
   padding: 4px 8px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 14px;
@@ -74,7 +76,7 @@ body.stats-page {
   transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
 .chips button:hover { background: var(--surface-2); color: var(--text); }
-.chips button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
+.chips button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); font-weight: 600; }
 
 .dis-list { margin-top: 10px; display: flex; flex-direction: column; }
 .dis-list label {
@@ -89,7 +91,7 @@ body.stats-page {
 }
 .dis-list label:hover { background: var(--surface-2); }
 .dis-list .n { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.dis-list input, .st-check input { accent-color: var(--text); width: 16px; height: 16px; margin: 0; }
+.dis-list input, .st-check input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
 .st-check { display: flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
 
 .st-body { min-width: 0; padding: 16px 24px 32px; display: flex; flex-direction: column; gap: 16px; }
@@ -102,7 +104,10 @@ body.stats-page {
 .st-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
 .cross-opts { display: inline-flex; gap: 12px; }
 .cross-opts[hidden] { display: none; }
-.stats-page .periods button { min-height: 32px; font-size: 14px; padding: 0 14px; }
+.stats-page .periods { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.stats-page .periods button { min-height: 30px; font-size: 14px; padding: 0 14px; border: 0; border-radius: 4px; background: transparent; color: var(--text-2); cursor: pointer; }
+.stats-page .periods button:hover { background: var(--surface-3); color: var(--text); }
+.stats-page .periods button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 1px var(--line-strong), 0 1px 2px var(--shadow); }
 .xl-btn { margin-left: auto; min-height: 38px; font-size: 15px; }
 
 .st-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
@@ -114,7 +119,7 @@ body.stats-page {
 .st-chart .lbl { fill: var(--text-2); font-size: 13px; }
 .st-chart .val { fill: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
 .st-chart rect.b { fill: var(--bar); }
-.st-chart rect.b:hover { fill: var(--text); }
+.st-chart rect.b:hover { fill: var(--bar-hover); }
 .st-chart line.grid { stroke: var(--line); }
 .st-chart .empty { color: var(--muted); padding: 32px 0; text-align: center; }
 
@@ -126,13 +131,13 @@ table.st thead th {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: var(--surface-3);
+  background: var(--surface-2);
   color: var(--text);
   font-weight: 600;
   cursor: pointer;
   user-select: none;
 }
-table.st thead th:hover { background: #2a333b; }
+table.st thead th:hover { background: var(--surface-3); }
 table.st thead th[aria-sort="ascending"]::after { content: " ▲"; font-size: 10px; color: var(--muted); }
 table.st thead th[aria-sort="descending"]::after { content: " ▼"; font-size: 10px; color: var(--muted); }
 table.st tbody tr:nth-child(even) td { background: var(--row-alt); }
@@ -150,10 +155,10 @@ table.st tfoot td {
 }
 table.st td.lbl { color: var(--text); }
 table.st .sub { color: var(--muted); }
-table.st .mtag { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--surface-3); color: var(--manual); font-size: 12px; }
+table.st .mtag { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid var(--manual); color: var(--manual); font-size: 12px; }
 table.st.raw thead th { cursor: default; }
-table.st.cross th:first-child, table.st.cross td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface-2); }
-table.st.cross thead th:first-child { z-index: 2; background: var(--surface-3); }
+table.st.cross th:first-child, table.st.cross td:first-child { position: sticky; left: 0; z-index: 1; background: var(--surface); box-shadow: inset -1px 0 0 var(--line); }
+table.st.cross thead th:first-child { z-index: 2; background: var(--surface-2); }
 .st-foot { line-height: 1.6; max-width: 1100px; }
 
 @media (max-width: 1100px) {

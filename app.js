@@ -128,7 +128,8 @@
     return box;
   }
 
-  // 시설 표지: 모두 어두운 바탕에 밝은 테두리의 둥근 사각형이고(질병 표지는 색을 채운 도형), 안쪽 무늬로 종류를 나눈다.
+  // 시설 표지: 흰 바탕에 색 테두리·무늬의 둥근 사각형이고(질병 표지는 색을 채운 도형), 안쪽 무늬로 종류를 나눈다.
+  // 흰색·밝은 회색처럼 밝은 색은 흰 바탕에서 보이지 않으므로, 짙은 회색(--fac-inv) 바탕에 그 색 무늬로 뒤집어 그린다.
   // config.json facilities 의 type 이 FAC_TYPES 에 없으면 아직 쓰지 않은 무늬를 나오는 순서대로 쓴다.
   // 무늬 칸: path(선), circle(고리 반지름), dot(가운데 점 반지름), dots(작은 점 [x, y, r] 목록), sw(선 굵기)
   var DEFAULT_FAC_TYPE = '거점소독시설';
@@ -158,12 +159,20 @@
     }
     return facGlyphMemo[type];
   }
+  // 색이 바탕(흰색)과 비슷하게 밝은가(상대 휘도 0.6 이상). '#rrggbb' 만 판단하고 그 밖은 밝지 않다고 본다
+  function isLight(hex) {
+    var m = /^#([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m) return false;
+    var n = parseInt(m[1], 16), c = [n >> 16, (n >> 8) & 255, n & 255].map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] >= 0.6;
+  }
   function facIcon(size, type) { return facIconOf(size, facSpec(type || DEFAULT_FAC_TYPE)); }
   // spec 은 { glyph, color }. color 는 색 이름(PALETTE id)
   function facIconOf(size, spec) {
     var ink = colorOf(spec.color), g = FAC_GLYPHS[spec.glyph] || FAC_GLYPHS.cross;
+    var bg = isLight(ink) ? token('--fac-inv') : token('--fac-bg');
     var box = svg('svg', { width: size, height: size, viewBox: '0 0 22 22', 'aria-hidden': 'true', 'class': 'shape fac' });
-    box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: token('--fac-bg'), stroke: ink, 'stroke-width': 2 }));
+    box.appendChild(svg('rect', { x: 1.5, y: 1.5, width: 19, height: 19, rx: 4, fill: bg, stroke: isLight(ink) ? bg : ink, 'stroke-width': 2 }));
     if (g.path) box.appendChild(svg('path', { d: g.path, fill: 'none', stroke: ink, 'stroke-width': g.sw || 2.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     if (g.circle) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.circle, fill: 'none', stroke: ink, 'stroke-width': 2.4 }));
     if (g.dot) box.appendChild(svg('circle', { cx: 11, cy: 11, r: g.dot, fill: ink }));
@@ -176,16 +185,16 @@
   // 기본값: 질병은 GROUPS 의 shape 와 token 색, 시설은 FAC_TYPES 무늬와 흰색(--fac). 방역대 원은 질병과 관계없이 --zone 색.
   // 사용자가 바꾼 값만 이 브라우저의 localStorage('dash-icons')에 저장하고, 수기 입력 내보내기 파일에도 담는다.
   var PALETTE = [ // token 이 있으면 style.css 의 값을 읽는다(기본 화면과 같은 색)
-    { id: 'red', name: '빨강', token: '--d-fmd', hex: '#ff5f57' },
-    { id: 'orange', name: '주황', token: '--d-hpai', hex: '#f5a623' },
-    { id: 'yellow', name: '노랑', hex: '#f2d43d' },
-    { id: 'teal', name: '청록', token: '--d-lsd', hex: '#2fc7a7' },
-    { id: 'blue', name: '파랑', token: '--d-asf', hex: '#4fa3ff' },
-    { id: 'purple', name: '보라', hex: '#b58cff' },
-    { id: 'white', name: '흰색', token: '--fac', hex: '#f4f7f9' },
-    { id: 'light', name: '밝은 회색', token: '--d-tb', hex: '#c3cad2' },
-    { id: 'gray', name: '회색', token: '--d-bru', hex: '#939da8' },
-    { id: 'dark', name: '어두운 회색', token: '--d-etc', hex: '#69737e' }
+    { id: 'red', name: '빨강', token: '--d-fmd', hex: '#e2433a' },
+    { id: 'orange', name: '주황', token: '--d-hpai', hex: '#ee8c0b' },
+    { id: 'yellow', name: '노랑', hex: '#e9c315' },
+    { id: 'teal', name: '청록', token: '--d-lsd', hex: '#0e9c84' },
+    { id: 'blue', name: '파랑', token: '--d-asf', hex: '#2a74e0' },
+    { id: 'purple', name: '보라', hex: '#8a5ae8' },
+    { id: 'white', name: '흰색', token: '--fac', hex: '#ffffff' },
+    { id: 'light', name: '밝은 회색', token: '--d-tb', hex: '#b8bfc7' },
+    { id: 'gray', name: '회색', token: '--d-bru', hex: '#838d98' },
+    { id: 'dark', name: '어두운 회색', token: '--d-etc', hex: '#59636e' }
   ];
   var D_SHAPES = [
     { id: 'circle', name: '원' }, { id: 'triangle', name: '삼각형' }, { id: 'square', name: '사각형' },
@@ -1328,7 +1337,7 @@
       prev.appendChild(c);
     }
     var fd = kind === 'd';
-    cell('목록', 22, 'dark', false);
+    cell('목록', 22, 'list', false);
     cell('지도(어두운 곳)', ps.mapSize, 'dark', fd);
     cell('지도(밝은 곳)', ps.mapSize, 'light', fd);
     box.appendChild(prev);
