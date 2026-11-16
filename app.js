@@ -62,6 +62,8 @@
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   state.stageShown = {};
   STAGES.forEach(function (x) { state.stageShown[x.id] = true; });
+  // 왼쪽 열 접기 상태: fac = 시설 목록 접힘, zero = 기간 안 0건 질병 펼침(기본은 접힘)
+  state.fold = { fac: false, zero: false };
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
     state.range = cleanRange(saved.range) || (Number.isInteger(saved.days) && saved.days > 0 ? { mode: 'rel', days: saved.days } : state.range);
@@ -69,10 +71,11 @@
     // 시설은 종류(type) 이름으로 기억한다. 처음 보는 종류는 켜진 상태로 시작한다.
     if (saved.facShown && typeof saved.facShown === 'object') Object.keys(saved.facShown).forEach(function (k) { state.facShown[k] = !!saved.facShown[k]; });
     if (saved.stageShown && typeof saved.stageShown === 'object') Object.keys(saved.stageShown).forEach(function (k) { if (k in state.stageShown) state.stageShown[k] = !!saved.stageShown[k]; });
+    if (saved.fold && typeof saved.fold === 'object') { state.fold.fac = saved.fold.fac === true; state.fold.zero = saved.fold.zero === true; }
   } catch (e) { /* 저장값이 없어도 동작 */ }
 
   function save() {
-    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown, facShown: state.facShown, stageShown: state.stageShown })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown, facShown: state.facShown, stageShown: state.stageShown, fold: state.fold })); } catch (e) { /* 무시 */ }
   }
   // 저장해 둔 기간 값 검사(형식이 틀리면 null)
   function cleanRange(r) {
@@ -524,6 +527,11 @@
     });
     $('facPanel').hidden = !types.length;
     state.facTypes = types;
+    var facFold = $('facFold');
+    facFold.setAttribute('aria-expanded', state.fold.fac ? 'false' : 'true');
+    facFold.title = state.fold.fac ? '시설 목록 펼치기' : '시설 목록 접기(지도 표시는 그대로)';
+    $('facPanel').classList.toggle('folded', state.fold.fac);
+    $('facSum').textContent = state.fold.fac ? types.map(function (t) { return t + ' ' + byType[t].length + (facOn(t) ? '' : '(숨김)'); }).join(' · ') : '';
 
     // 오른쪽 '방역 자원' 한 줄 요약
     var parts = types.map(function (t) {
@@ -1153,12 +1161,14 @@
     items.forEach(function (it) { counts[it.g.id]++; });
     var ul = $('counts');
     ul.textContent = '';
+    var zeroGroups = GROUPS.filter(function (g) { return !counts[g.id]; });
     GROUPS.forEach(function (g) {
-      var li = el('li', 'count-wrap' + (state.shown[g.id] ? '' : ' off'));
+      if (!counts[g.id] && !state.fold.zero) return;
+      var li = el('li', 'count-wrap' + (state.shown[g.id] ? '' : ' off') + (g.name.replace(/ /g, '').length > 7 ? ' long' : ''));
       var b = el('button', 'count' + (counts[g.id] ? '' : ' zero'));
       b.type = 'button';
       b.setAttribute('aria-pressed', state.shown[g.id] ? 'true' : 'false');
-      b.title = state.shown[g.id] ? '지도에서 숨기기' : '지도에 표시하기';
+      b.title = g.name + ' ' + counts[g.id] + '건\n' + (state.shown[g.id] ? '지도에서 숨기기' : '지도에 표시하기');
       b.appendChild(el('span', 'ico-slot'));
       b.appendChild(el('span', 'name', g.name));
       b.appendChild(el('span', 'n', String(counts[g.id])));
@@ -1167,6 +1177,17 @@
       li.appendChild(iconButton('d', g.id, g.name, shapeIcon(g, 22)));
       ul.appendChild(li);
     });
+    var moreBox = $('countsMore');
+    moreBox.textContent = '';
+    if (zeroGroups.length) {
+      var mb = el('button', 'more-btn', state.fold.zero ? '0건 접기' : '0건 ' + zeroGroups.length + '개 더 보기');
+      mb.type = 'button';
+      mb.setAttribute('aria-expanded', state.fold.zero ? 'true' : 'false');
+      mb.title = '조회 기간에 발생이 없는 질병: ' + zeroGroups.map(function (g) { return g.name + (state.shown[g.id] ? '' : '(숨김)'); }).join(', ') +
+        '\n' + (state.fold.zero ? '목록에서 접습니다' : '목록에 펼쳐 켜고 끄기와 아이콘 설정을 할 수 있습니다');
+      mb.addEventListener('click', function () { state.fold.zero = !state.fold.zero; save(); render(); });
+      moreBox.appendChild(mb);
+    }
 
     // 발생 단계별 건수 (켜고 끄기). 건수는 질병 켜고 끄기와 관계없이 조회 기간 안 전체
     var stc = {};
@@ -1181,7 +1202,7 @@
       b.type = 'button';
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
       b.title = x.tip + '\n' + (on ? '지도와 최근 발생 목록에서 숨기기' : '지도와 최근 발생 목록에 표시하기');
-      b.appendChild(shapeIcon({ shape: 'circle', color: token('--map-ink') }, 18, false, x.id));
+      b.appendChild(shapeIcon({ shape: 'circle', color: token('--map-ink') }, 14, false, x.id));
       b.appendChild(el('span', 'name', x.name));
       b.appendChild(el('span', 'n', String(stc[x.id])));
       b.addEventListener('click', function () { state.stageShown[x.id] = !on; save(); render(); });
@@ -1685,6 +1706,7 @@
       b.addEventListener('click', function () { $('manualDlg').close(); });
     });
     $('manualBtn').addEventListener('click', function () { openDialog(null); });
+    $('facFold').addEventListener('click', function () { state.fold.fac = !state.fold.fac; save(); if (state.data) render(); });
     // 보도자료 대조 경고의 "발생 입력" 단추: 그 질병을 골라 둔 입력 창을 연다
     $('checkNote').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-disease]');

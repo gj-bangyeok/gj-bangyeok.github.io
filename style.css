@@ -765,3 +765,78 @@ body.picking #map { cursor: crosshair; }
   .stage-row { margin-bottom: 2px; padding-top: 3px; }
   .col:first-child .count { min-height: 27px; }
 }
+
+/* ---------- 왼쪽 열 배치 손질 (2026-11-16) ----------
+   1366x768 에서도 '최근 발생'이 4줄 넘게 보이도록: 단계 칩을 한 줄로, 0건 질병은 접고, 시설 목록은 머리글로 접을 수 있게 한다 */
+.stage-row { display: block; position: relative; margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.stage-cap { position: absolute; top: -9px; left: 6px; padding: 0 4px; background: var(--surface); font-size: 12px; line-height: 16px; }
+.stage-chips { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 2px; }
+.col:first-child .stage-chips .count, .stage-chips .count { grid-template-columns: 14px auto auto; gap: 2px; min-height: 26px; padding: 0 2px; font-size: 13px; }
+.stage-chips .count .n, .col:first-child .stage-chips .count .n { font-size: 14px; min-width: 0; padding-left: 2px; }
+
+.count-foot { display: flex; align-items: center; justify-content: space-between; gap: 4px 8px; flex-wrap: wrap; }
+.count-foot .hint { flex: 1 1 auto; min-width: 0; }
+.more-btn {
+  flex: none; min-height: 26px; padding: 0 8px; white-space: nowrap; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--muted); font-size: 14px; text-align: left; cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+.more-btn:hover { background: var(--surface-2); color: var(--text-2); }
+.more-btn::after { content: " ▾"; }
+.more-btn[aria-expanded="true"]::after { content: " ▴"; }
+
+.fold-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; cursor: pointer;
+}
+.fold-btn::after { content: ""; width: 7px; height: 7px; margin-top: -3px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform var(--dur) var(--ease); }
+.fold-btn[aria-expanded="false"]::after { margin-top: 3px; transform: rotate(-135deg); }
+.fold-btn:hover { color: var(--text-2); }
+.fold-btn:focus-visible, .more-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.fac-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fac-panel.folded #facCounts, .fac-panel.folded .hint { display: none; }
+.col:first-child .fac-panel.folded .panel-head { margin-bottom: 0; }
+
+@media (max-height: 900px) and (min-width: 1101px) {
+  .col:first-child .panel { padding: 6px 14px; }
+  /* 질병은 두 칸으로 */
+  #counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 4px; margin-bottom: 2px; }
+  .col:first-child #counts .count { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; min-height: 28px; padding: 0 4px; font-size: 15px; }
+  #counts .count .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .col:first-child #counts .count .n { font-size: 19px; }
+  #counts .ico-btn { left: 3px; }
+  .more-btn { min-height: 22px; padding: 0 4px; font-size: 13px; }
+  .stage-row { margin-bottom: 2px; }
+  .col:first-child .fac-row .count { min-height: 28px; }
+  .fac-go { min-height: 26px; padding: 0 10px; }
+  .col:first-child .row .a { line-height: 1.3; }
+  .col:first-child .panel.grow .panel-head { margin-bottom: 2px; }
+  .stage-row { margin-top: 9px; }
+  .col:first-child .hint { font-size: 13px; line-height: 1.3; }
+  .fac-panel .hint { display: none; }
+  /* 최근 발생 줄 높이 */
+  .col:first-child .rows .row { padding: 4px 6px; row-gap: 0; column-gap: 8px; }
+  .col:first-child .row .t { font-size: 16px; }
+  .col:first-child .row .a, .col:first-child .row .d { font-size: 14px; }
+}
+@media (max-height: 900px) and (min-width: 1101px) {
+  /* 시설: 머리글과 목록을 한 줄에 */
+  .fac-panel { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; }
+  .fac-panel > .panel-head { display: contents; }
+  .fac-panel .fac-sum { text-align: right; }
+  .fac-sum:empty { display: none; }
+  .col:first-child .fac-panel .counts { margin-bottom: 0; }
+  .count-foot .hint { line-height: 22px; }
+}
+@media (max-height: 900px) and (min-width: 1101px) {
+  /* 질병 7개가 모두 건수가 있어도(4줄) 최근 발생이 4줄 남도록 한 번 더 줄인다 */
+  .col:first-child #counts .count { min-height: 26px; }
+  .col:first-child .row .t { line-height: 1.25; }
+  .col:first-child .row .t .stg { line-height: 18px; vertical-align: 1px; }
+  .col:first-child .row .t .stg-antigen { line-height: 16px; }
+}
+@media (max-height: 900px) and (min-width: 1101px) {
+  /* 두 칸에 다 들어가지 않는 긴 이름(아프리카돼지열병)은 한 줄을 다 쓴다 */
+  #counts { grid-auto-flow: row dense; }
+  #counts li.long { grid-column: 1 / -1; }
+}

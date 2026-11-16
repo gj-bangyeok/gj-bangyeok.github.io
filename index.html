@@ -65,15 +65,16 @@
         <span class="muted" id="periodLabel"></span>
       </div>
       <ul id="counts" class="counts"></ul>
+      <div class="count-foot"><p class="hint">누르면 지도와 막대그래프에서 켜고 끕니다</p><span id="countsMore"></span></div>
       <div class="stage-row" role="group" aria-labelledby="stageCap">
         <span class="stage-cap" id="stageCap" title="발생 단계. 누르면 지도와 최근 발생 목록에서 켜고 끕니다. 질병별 건수와 그래프는 확진·종료만 셉니다">단계</span>
         <ul id="stageCounts" class="stage-chips"></ul>
       </div>
-      <p class="hint">누르면 지도와 막대그래프에서 켜고 끕니다</p>
     </section>
     <section class="panel fac-panel" id="facPanel" hidden>
       <div class="panel-head">
-        <h2>시설</h2>
+        <h2><button type="button" class="fold-btn" id="facFold" aria-expanded="true" aria-controls="facCounts">시설</button></h2>
+        <span class="muted fac-sum" id="facSum"></span>
       </div>
       <ul id="facCounts" class="counts"></ul>
       <p class="hint">누르면 지도에서 켜고 끕니다. ‘위치’는 그곳으로 이동</p>
