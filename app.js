@@ -34,7 +34,8 @@
   var ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
   var state = { range: { mode: 'rel', days: 30 }, rangeMsg: null, dayKey: null, shown: {}, facShown: {}, data: null, map: null, layer: null, facLayer: null, markers: {},
-    manual: [], storeOk: true, editId: null, pick: null, picking: false, pickMarker: null, flash: null };
+    manual: [], storeOk: true, editId: null, pick: null, pickPrev: null, picking: false, pickMarker: null, flash: null,
+    saving: false };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
@@ -508,6 +509,8 @@
       it.geo === 'sgg' ? '보도자료에 시군구까지만 나와 시군구 중심에 표시했습니다' : '',
       press && it.note ? it.note : '',
       it.source === 'manual' ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
+      it.source === 'manual' && it.mgeo ? GEO_TEXT[it.mgeo] + (it.mgeo !== 'pick' && it.geo_name ? ': ' + it.geo_name : '') : '',
+      it.source === 'manual' && approxGeo(it) ? '주소로 찾은 대략의 위치라 방역대 원(점선)이 실제 범위와 다를 수 있습니다' : '',
       it.memo ? '메모: ' + it.memo : ''
     ];
     lines.filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
@@ -542,9 +545,10 @@
       if (it.lat == null || it.lng == null) return;
       var g = it.g, fresh = it.ago < ZONE_DAYS;
       if (g.core && fresh && !it.end) {
+        var rough = approxGeo(it); // 주소로 찾은 대략의 위치면 세 원을 모두 점선으로
         [[10000, 0.04, '6 6', 1], [3000, 0.08, null, 1.5], [500, 0.3, null, 1]].forEach(function (z) {
           L.circle([it.lat, it.lng], {
-            radius: z[0], color: zone, weight: z[3], opacity: 0.75, dashArray: z[2],
+            radius: z[0], color: zone, weight: z[3], opacity: 0.75, dashArray: rough ? '4 6' : z[2],
             fillColor: zone, fillOpacity: z[1], interactive: false
           }).addTo(state.layer);
         });
@@ -878,6 +882,13 @@
   function manualActions(it) {
     var box = el('div', 'mact');
     if (it.api_match) box.appendChild(el('span', 'tag', '공공데이터에 반영됨'));
+    if (it.lat == null && it.inDialog) {
+      var fb = el('button', 'ghost sm', '위치 찾기');
+      fb.type = 'button';
+      fb.title = '주소로 위치를 찾습니다. 지명 좌표표에 없으면 주소의 행정구역 이름만 OpenStreetMap 주소 검색으로 보냅니다.';
+      fb.addEventListener('click', function () { findForItem(it.id, fb); });
+      box.appendChild(fb);
+    }
     var e = el('button', 'ghost sm', '수정');
     e.type = 'button';
     e.addEventListener('click', function () { openDialog(it.id); });
@@ -1030,7 +1041,8 @@
     var recent = $('recent');
     recent.textContent = '';
     shown.slice(0, 40).forEach(function (it) {
-      var tag = it.lat == null ? el('span', 'tag', '위치 미확인') : null;
+      var tag = it.lat == null ? el('span', 'tag', '위치 미확인') : approxGeo(it) ? el('span', 'tag', GEO_SHORT[it.mgeo]) : null;
+      if (tag && it.lat != null) tag.title = GEO_TEXT[it.mgeo] + (it.geo_name ? ': ' + it.geo_name : '');
       recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [it.addr, it.species, tag], null, true));
     });
     $('recentCount').textContent = shown.length > 40 ? shown.length + '건 중 40건' : shown.length + '건';
@@ -1134,12 +1146,16 @@
     if (count != null && !(Number.isInteger(count) && count >= 0 && count <= 10000000)) throw new Error('두수는 0 이상의 정수로 입력해 주세요.');
     var lat = x.lat == null || x.lat === '' ? null : Number(x.lat), lng = x.lng == null || x.lng === '' ? null : Number(x.lng);
     if ((lat == null) !== (lng == null) || (lat != null && !(lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 132))) throw new Error('지정한 위치가 국내 범위를 벗어났습니다.');
+    // 위치 정밀도. 이 칸이 없는 예전 항목(좌표가 있으면 지도에서 직접 지정한 것)도 그대로 읽는다
+    var geo = lat == null ? null : (typeof x.geo === 'string' && GEO_TEXT[x.geo] ? x.geo : 'pick');
+    function plain(k, max) { return lat == null || geo === 'pick' || typeof x[k] !== 'string' ? '' : x[k].replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max); }
     return {
       id: typeof x.id === 'string' && /^M-[0-9a-z]{6,12}-[0-9a-f]{6}$/.test(x.id) ? x.id : newId(),
       disease_key: key, disease: disease, date: d, end: end,
       addr: text('addr', '주소', 60, true), species: text('species', '축종', 20, true),
       count: count, memo: text('memo', '메모', 200, false),
       lat: lat == null ? null : Math.round(lat * 1e6) / 1e6, lng: lng == null ? null : Math.round(lng * 1e6) / 1e6,
+      geo: geo, geo_name: plain('geo_name', 80), geo_addr: plain('geo_addr', 60),
       created: typeof x.created === 'string' ? x.created.slice(0, 25) : new Date().toISOString(),
       updated: typeof x.updated === 'string' ? x.updated.slice(0, 25) : null
     };
@@ -1149,7 +1165,8 @@
   function manualItems() {
     return state.manual.map(function (m) {
       return { id: m.id, disease: m.disease, farm: '', addr: m.addr, date: m.date, species: m.species, count: m.count,
-        agency: '', end: m.end, lat: m.lat, lng: m.lng, geo: m.lat == null ? null : 'manual', source: 'manual', memo: m.memo };
+        agency: '', end: m.end, lat: m.lat, lng: m.lng, geo: m.lat == null ? null : 'manual', source: 'manual', memo: m.memo,
+        mgeo: m.geo, geo_name: m.geo_name };
     });
   }
 
@@ -1175,6 +1192,219 @@
         var a1 = areaOf(a.addr);
         return !!a0.emd && a0.emd === a1.emd && (!a0.city || !a1.city || a0.city === a1.city);
       });
+    });
+  }
+
+  // ---------------------------------------------------------------- 주소 → 좌표 (수기 입력용)
+  // 1) 지명 좌표표(api/places: 시군구·읍면동·리 이름과 중심 좌표)에서 리 → 읍면동 → 시군구 순으로 찾는다.
+  // 2) 표에서 읍면동 이하를 못 찾았을 때만, 사용자가 저장·찾기 단추를 누르면 OpenStreetMap 주소 검색(Nominatim)에
+  //    주소의 행정구역 부분(시도, 시군구, 읍면동, 리. 도로명 주소는 도로 이름)만 보낸다. 번지·건물·농장명은 보내지 않는다.
+  //    실패하거나 막히면(행정망 등) 조용히 1)의 결과를 쓴다. 찾은 결과는 이 브라우저에 저장해 다시 묻지 않는다.
+  var GEO_TEXT = { pick: '지도에서 직접 지정한 위치', ri: '주소로 찾은 위치(리·동)', road: '주소로 찾은 위치(도로 기준)',
+    emd: '주소로 찾은 위치(읍면동 중심)', sgg: '주소로 찾은 위치(시군구 중심)' };
+  var GEO_SHORT = { ri: '리 위치', road: '도로 위치', emd: '읍면동 중심', sgg: '시군구 중심' };
+  var GEO_RANK = { sgg: 1, emd: 2, ri: 3, road: 3 };
+  var SIDO_NAMES = { 서울: '서울특별시 서울시', 부산: '부산광역시 부산시', 대구: '대구광역시 대구시', 인천: '인천광역시 인천시',
+    광주: '광주광역시', 대전: '대전광역시 대전시', 울산: '울산광역시 울산시', 세종: '세종특별자치시', 경기: '경기도',
+    강원: '강원특별자치도 강원도', 충북: '충청북도', 충남: '충청남도', 전북: '전북특별자치도 전라북도', 전남: '전라남도',
+    경북: '경상북도', 경남: '경상남도', 제주: '제주특별자치도 제주도' };
+  var SIDO_FULL = { 서울: '서울특별시', 부산: '부산광역시', 대구: '대구광역시', 인천: '인천광역시', 광주: '광주광역시',
+    대전: '대전광역시', 울산: '울산광역시', 세종: '세종특별자치시', 경기: '경기도', 강원: '강원특별자치도', 충북: '충청북도',
+    충남: '충청남도', 전북: '전북특별자치도', 전남: '전라남도', 경북: '경상북도', 경남: '경상남도', 제주: '제주특별자치도' };
+  var SIDO_OF = {};
+  Object.keys(SIDO_NAMES).forEach(function (k) { SIDO_OF[k] = k; SIDO_NAMES[k].split(' ').forEach(function (n) { SIDO_OF[n] = k; }); });
+  var MERGED_JN = ['전남광주통합특별시', '전남광주특별시', '전남광주'];
+  var OLD_SGG = { '충북 청원군': '청주시', '경기 여주군': '여주시', '충남 당진군': '당진시', '경남 마산시': '창원시', '경남 진해시': '창원시' };
+  var NOMI_URL = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=kr&limit=1&accept-language=ko&q=';
+  var NET_GAP_MS = 1100, NET_TIMEOUT_MS = 8000, NET_PAUSE_MS = 5 * 60 * 1000, NET_TRIES = 3;
+  var GEO_CACHE_KEY = 'dash-geo', GEO_CACHE_MAX = 300;
+  var places = { p: null, promise: null, error: null };
+  var net = { last: 0, downUntil: 0 };
+
+  function approxGeo(it) { return it.source === 'manual' && it.lat != null && !!it.mgeo && it.mgeo !== 'pick'; }
+  function sidoShort(word, next) {
+    if (MERGED_JN.indexOf(word) >= 0) return /구$/.test(next || '') ? '광주' : '전남';
+    return SIDO_OF[word] || null;
+  }
+
+  function loadPlaces() {
+    if (!places.promise) {
+      places.promise = fetch('api/places', { cache: 'no-cache' }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (t) {
+        places.p = t && t.p && typeof t.p === 'object' ? t.p : {};
+      }).catch(function (e) {
+        places.p = {}; places.error = e.message; // 표가 없어도 주소 검색과 지도 지정은 그대로 쓸 수 있다
+      });
+    }
+    return places.promise;
+  }
+
+  // 주소 → 행정구역 토막. 번지·도로명·건물명 등 행정구역이 아닌 말을 만나면 멈춘다(도로명은 road 로 따로 둠).
+  function parseAddr(addr) {
+    var t = String(addr || '').replace(/[,()\[\]]/g, ' ').split(/\s+/).filter(Boolean), i = 0;
+    var pa = { sido: null, sgg: null, emd: null, ri: null, road: null, hinted: false };
+    if (t.length && sidoShort(t[0], t[1])) { pa.sido = sidoShort(t[0], t[1]); i = 1; }
+    if (pa.sido === '세종') { if (t[i] === '세종시' || t[i] === '세종특별자치시') i++; pa.sgg = '세종시'; }
+    else if (t[i] && /(시|군|구)$/.test(t[i])) {
+      pa.sgg = t[i]; i++;
+      if (/시$/.test(pa.sgg) && t[i] && /구$/.test(t[i])) i++; // 일반구(포항시 남구 등)는 시로 합친다
+      if (pa.sido && OLD_SGG[pa.sido + ' ' + pa.sgg]) pa.sgg = OLD_SGG[pa.sido + ' ' + pa.sgg];
+    }
+    if (t[i] && /(읍|면|동|가)$/.test(t[i]) && !/^\d/.test(t[i])) {
+      pa.emd = t[i]; i++;
+      if (t[i] && /리$/.test(t[i]) && /(읍|면)$/.test(pa.emd)) { pa.ri = t[i]; i++; }
+    }
+    if (!pa.emd && t[i] && /(로|길)$/.test(t[i]) && !/^\d/.test(t[i])) pa.road = t[i];
+    // 시군구 없이 읍면동부터 적었으면 현황판 기준 시군(예: 경주시) 안에서 찾는다
+    var home = state.data && state.data.home;
+    if (!pa.sgg && (pa.emd || pa.road) && home && home.name) {
+      pa.sgg = home.name; pa.sido = pa.sido || sidoShort((home.region || '').split(' ')[0]); pa.hinted = true;
+    }
+    return pa;
+  }
+  function wantRank(pa) { return pa.ri || pa.road ? 3 : pa.emd ? 2 : pa.sgg ? 1 : 0; }
+
+  // 1) 지명 좌표표에서 찾기. 반환 {lat, lng, geo, name, sido} 또는 null
+  function tableFind(pa) {
+    var P = places.p;
+    if (!P || !pa.sgg) return null;
+    var home = state.data && state.data.home, homeSido = home ? sidoShort((home.region || '').split(' ')[0]) : null;
+    var sidos = pa.sido ? [pa.sido] : Object.keys(P);
+    var tries = [];
+    if (pa.ri) tries.push([pa.sgg + ' ' + pa.emd + ' ' + pa.ri, 'ri']);
+    if (pa.emd) tries.push([pa.sgg + ' ' + pa.emd, 'emd']);
+    tries.push([pa.sgg, 'sgg']);
+    for (var i = 0; i < tries.length; i++) {
+      var key = tries[i][0];
+      var hits = sidos.filter(function (s) { return P[s] && P[s][key]; });
+      if (hits.length > 1 && homeSido && hits.indexOf(homeSido) >= 0) hits = [homeSido];
+      if (hits.length === 1) {
+        var ll = P[hits[0]][key];
+        return { lat: ll[0], lng: ll[1], geo: tries[i][1], name: SIDO_FULL[hits[0]] + ' ' + key, sido: hits[0], via: 'table' };
+      }
+    }
+    return null;
+  }
+
+  function geoCache() {
+    try { var c = JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}'); return c && typeof c.q === 'object' ? c : { v: 1, q: {} }; }
+    catch (e) { return { v: 1, q: {} }; }
+  }
+  function geoCachePut(q, val) {
+    try {
+      var c = geoCache(), keys = Object.keys(c.q);
+      delete c.q[q];
+      if (keys.length >= GEO_CACHE_MAX) keys.slice(0, keys.length - GEO_CACHE_MAX + 1).forEach(function (k) { delete c.q[k]; });
+      c.q[q] = val;
+      localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(c));
+    } catch (e) { /* 저장 못 해도 찾기는 된다 */ }
+  }
+
+  // Nominatim 한 번 묻기. 결과: [lat, lng], 0(없음), 또는 null(통신 실패·차단 → 이후 5분간 묻지 않음)
+  function askNominatim(q) {
+    var cached = geoCache().q[q];
+    if (cached !== undefined) return Promise.resolve(cached);
+    if (Date.now() < net.downUntil) return Promise.resolve(null);
+    var wait = Math.max(0, net.last + NET_GAP_MS - Date.now());
+    return new Promise(function (res) { setTimeout(res, wait); }).then(function () {
+      net.last = Date.now();
+      var ctl = window.AbortController ? new AbortController() : null;
+      var to = ctl ? setTimeout(function () { ctl.abort(); }, NET_TIMEOUT_MS) : null;
+      return fetch(NOMI_URL + encodeURIComponent(q), ctl ? { signal: ctl.signal, credentials: 'omit' } : { credentials: 'omit' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (res) {
+          clearTimeout(to);
+          net.last = Date.now();
+          var v = 0;
+          if (Array.isArray(res) && res[0]) {
+            var lat = Number(res[0].lat), lng = Number(res[0].lon);
+            if (lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 132) v = [Math.round(lat * 1e6) / 1e6, Math.round(lng * 1e6) / 1e6];
+          }
+          geoCachePut(q, v);
+          return v;
+        })
+        .catch(function () { clearTimeout(to); net.last = Date.now(); net.downUntil = Date.now() + NET_PAUSE_MS; return null; });
+    });
+  }
+
+  // 2) 표에서 읍면동 이하를 못 찾았을 때 주소 검색. base: 표에서 찾은 결과(없으면 null)
+  function netFind(pa, base) {
+    var sido = pa.sido || (base && base.sido);
+    if (!pa.sgg && !pa.emd) return Promise.resolve(null); // 행정구역을 알아보지 못한 주소는 보내지 않는다
+    var parts = [], ranks = [];
+    if (sido) { parts.push(sido === '세종' ? '세종특별자치시' : SIDO_FULL[sido]); ranks.push(0); }
+    if (pa.sgg && sido !== '세종') { parts.push(pa.sgg); ranks.push(1); }
+    if (pa.emd) { parts.push(pa.emd); ranks.push(2); }
+    if (pa.ri) { parts.push(pa.ri); ranks.push(3); }
+    else if (pa.road) { parts.push(pa.road); ranks.push(3); }
+    var floor = base ? GEO_RANK[base.geo] : 0, queries = [];
+    for (var n = parts.length; n > 0 && queries.length < NET_TRIES; n--) {
+      var r = ranks[n - 1];
+      if (r <= floor || r < 2) break; // 표가 이미 아는 단계나 시군구 이하로는 묻지 않는다
+      queries.push({ q: parts.slice(0, n).join(' '), geo: r === 2 ? 'emd' : pa.ri ? 'ri' : 'road' });
+    }
+    var center = sido && places.p && places.p[sido] ? places.p[sido][pa.sgg] : null;
+    function next(i) {
+      if (i >= queries.length) return Promise.resolve(null);
+      return askNominatim(queries[i].q).then(function (v) {
+        if (v === null) return null; // 통신 실패·차단: 더 묻지 않음
+        if (v && (!center || km(center[0], center[1], v[0], v[1]) <= 60)) {
+          return { lat: v[0], lng: v[1], geo: queries[i].geo, name: queries[i].q, sido: sido, via: 'osm' };
+        }
+        return next(i + 1);
+      });
+    }
+    return next(0);
+  }
+
+  // 주소 → 위치. useNet 이 거짓이면 표만 쓴다(외부 호출 없음). 결과 {lat, lng, geo, name, addr, via} 또는 null
+  function geocodeAddr(addr, useNet) {
+    addr = String(addr || '').replace(/\s+/g, ' ').trim();
+    return loadPlaces().then(function () {
+      var pa = parseAddr(addr), base = tableFind(pa);
+      if (pa.hinted && base && base.geo === 'sgg') base = null; // 기준 시군을 짐작해 넣은 경우 시군 중심만으로는 쓰지 않음
+      var done = function (g) { if (g) g.addr = addr; return g; };
+      if (!useNet || (base && GEO_RANK[base.geo] >= wantRank(pa))) return done(base);
+      return netFind(pa, base).then(function (g) { return done(g || base); });
+    });
+  }
+
+  // 좌표가 없는 예전 수기 항목을 표로만 채운다(화면을 열 때 한 번, 외부 호출 없음)
+  function autoFillManual() {
+    var todo = state.manual.filter(function (m) { return m.lat == null; });
+    if (!todo.length) return;
+    loadPlaces().then(function () {
+      var n = 0;
+      todo.forEach(function (m) {
+        // 읍면동까지 적은 주소가 표에 시군구까지만 있으면 채우지 않는다(목록의 "위치 찾기"로 더 자세히 찾게)
+        var pa = parseAddr(m.addr), g = tableFind(pa);
+        if (!g || GEO_RANK[g.geo] < Math.min(wantRank(pa), 2)) return;
+        m.lat = g.lat; m.lng = g.lng; m.geo = g.geo; m.geo_name = g.name; m.geo_addr = m.addr; n++;
+      });
+      if (!n) return;
+      storeSave();
+      flash('위치가 없던 수기 항목 ' + n + '건을 주소로 찾아 지도에 표시했습니다(지명 좌표표 기준).');
+      if (state.data && !state.picking) render();
+      if ($('manualDlg').open) renderManualList();
+    });
+  }
+
+  // 목록의 "위치 찾기": 표와 주소 검색으로 찾는다
+  function findForItem(id, btn) {
+    var m = state.manual.filter(function (x) { return x.id === id; })[0];
+    if (!m) return;
+    btn.disabled = true; btn.textContent = '찾는 중…';
+    geocodeAddr(m.addr, true).then(function (g) {
+      btn.disabled = false; btn.textContent = '위치 찾기';
+      if (!g) { $('dlgErr').textContent = '"' + m.addr + '"의 위치를 찾지 못했습니다. 수정을 눌러 지도에서 위치를 지정해 주세요.'; return; }
+      m.lat = g.lat; m.lng = g.lng; m.geo = g.geo; m.geo_name = g.name; m.geo_addr = g.addr;
+      m.updated = new Date().toISOString();
+      storeSave();
+      $('dlgErr').textContent = m.addr + ': ' + GEO_TEXT[g.geo] + '에 표시했습니다(' + g.name + ').';
+      render();
+      renderManualList();
     });
   }
 
@@ -1270,33 +1500,57 @@
       syncEtc();
     });
     $('dlgNew').addEventListener('click', function () { openDialog(null); });
-    $('pickBtn').addEventListener('click', startPick);
+    $('pickBtn').addEventListener('click', function () { startPick(null); });
+    $('findBtn').addEventListener('click', findByAddr);
+    form().elements.addr.addEventListener('input', syncPick);
     $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); });
     $('pickOk').addEventListener('click', function () {
-      if (state.pickMarker) { var ll = state.pickMarker.getLatLng(); state.pick = { lat: ll.lat, lng: ll.lng }; }
+      if (state.pickMarker) {
+        var ll = state.pickMarker.getLatLng(), p = state.pick;
+        // 주소로 찾은 위치를 그대로 두면 그 정밀도를 유지하고, 옮겼으면 직접 지정한 위치로 본다
+        var same = p && p.geo !== 'pick' && Math.abs(p.lat - ll.lat) < 1e-7 && Math.abs(p.lng - ll.lng) < 1e-7;
+        if (!same) state.pick = { lat: ll.lat, lng: ll.lng, geo: 'pick' };
+      }
       endPick();
     });
-    $('pickCancel').addEventListener('click', endPick);
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.picking) endPick(); });
+    $('pickCancel').addEventListener('click', function () { state.pick = state.pickPrev; endPick(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.picking) { state.pick = state.pickPrev; endPick(); } });
+    autoFillManual();
     $('exportBtn').addEventListener('click', exportManual);
     $('importBtn').addEventListener('click', function () { $('importFile').value = ''; $('importFile').click(); });
     $('importFile').addEventListener('change', importManual);
   }
 
   function syncEtc() { $('etcWrap').hidden = form().elements.disease_key.value !== 'etc'; }
+  function addrNow() { return form().elements.addr.value.replace(/\s+/g, ' ').trim(); }
   function syncPick() {
-    var p = state.pick;
-    $('pickText').textContent = p
-      ? '지정한 위치: ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5)
-      : '위치를 지정하지 않으면 위치 미확인으로 목록과 건수에만 들어갑니다.';
+    var p = state.pick, geo = p ? p.geo || 'pick' : null;
+    var stale = p && geo !== 'pick' && p.addr !== addrNow();
+    $('pickText').textContent = !p
+      ? '위치를 지정하지 않으면 저장할 때 주소로 위치를 찾아 지도에 표시합니다.'
+      : stale ? '주소를 고쳤으므로 저장할 때 위치를 다시 찾습니다.'
+      : GEO_TEXT[geo] + (geo !== 'pick' && p.name ? ' (' + p.name + ')' : '') + ': ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5);
     $('pickClear').hidden = !p;
+  }
+
+  // "주소로 위치 찾기": 찾은 위치를 지도에 미리 보여 주고, 맞으면 정하고 다르면 지도를 눌러 고치게 한다
+  function findByAddr() {
+    var addr = addrNow(), btn = $('findBtn');
+    if (!addr) { $('dlgErr').textContent = '주소를 먼저 적어 주세요.'; return; }
+    btn.disabled = true; btn.textContent = '찾는 중…';
+    $('dlgErr').textContent = '';
+    geocodeAddr(addr, true).then(function (g) {
+      btn.disabled = false; btn.textContent = '주소로 위치 찾기';
+      if (!g) { $('dlgErr').textContent = '주소로 위치를 찾지 못했습니다. 지도를 눌러 위치를 지정해 주세요.'; return; }
+      startPick(g);
+    });
   }
 
   function openDialog(id) {
     var f = form(), m = id ? state.manual.filter(function (x) { return x.id === id; })[0] : null;
     f.reset();
     state.editId = m ? m.id : null;
-    state.pick = m && m.lat != null ? { lat: m.lat, lng: m.lng } : null;
+    state.pick = m && m.lat != null ? { lat: m.lat, lng: m.lng, geo: m.geo || 'pick', name: m.geo_name, addr: m.geo_addr || m.addr } : null;
     $('dlgTitle').textContent = m ? '수기 입력 수정' : '발생 수기 입력';
     $('dlgSave').textContent = m ? '고친 내용 저장' : '저장';
     $('dlgNew').hidden = !m;
@@ -1319,14 +1573,23 @@
     if (!$('manualDlg').open) $('manualDlg').showModal();
   }
 
-  function startPick() {
+  // found: 주소로 찾은 위치(미리 보기). 없으면 지도에서 직접 지정
+  function startPick(found) {
     if (!state.map) return;
     state.picking = true;
+    state.pickPrev = state.pick;
     $('manualDlg').close();
     $('pickBar').hidden = false;
     $('pickOk').disabled = true;
+    $('pickMsg').textContent = found
+      ? GEO_TEXT[found.geo] + ' (' + found.name + ')입니다. 맞으면 "이 위치로 정하기"를, 다르면 지도를 누르거나 표지를 끌어 고치세요.'
+      : '지도에서 발생 위치를 누르세요. 표지는 끌어서 옮길 수 있습니다.';
     document.body.classList.add('picking');
-    if (state.pick) { placePick(state.pick); state.map.setView([state.pick.lat, state.pick.lng], Math.max(state.map.getZoom(), 11)); }
+    if (found) state.pick = found;
+    if (state.pick) {
+      placePick(state.pick);
+      state.map.setView([state.pick.lat, state.pick.lng], Math.max(state.map.getZoom(), found && found.geo === 'sgg' ? 10 : 12));
+    }
   }
   function placePick(ll) {
     if (!state.pickMarker) {
@@ -1349,24 +1612,45 @@
     $('manualDlg').showModal();
   }
 
+  // 저장: 지도에서 직접 지정한 위치가 항상 우선. 없으면(또는 주소를 고쳤으면) 주소로 위치를 찾은 뒤 저장한다.
   function submitManual() {
+    if (state.saving) return;
     var f = form(), body = {};
     ['disease_key', 'disease_text', 'date', 'end', 'addr', 'species', 'count', 'memo'].forEach(function (k) { body[k] = f.elements[k].value.trim(); });
-    if (state.pick) { body.lat = state.pick.lat; body.lng = state.pick.lng; }
     var old = state.editId ? state.manual.filter(function (x) { return x.id === state.editId; })[0] : null;
     if (old) { body.id = old.id; body.created = old.created; body.updated = new Date().toISOString(); }
+    if (!old && state.manual.length >= MANUAL_MAX) { $('dlgErr').textContent = '수기 항목이 너무 많습니다. 오래된 항목을 지워 주세요.'; return; }
     var item;
     try { item = checkItem(body, false); } catch (e) { $('dlgErr').textContent = e.message; return; }
-    if (old) state.manual = state.manual.map(function (x) { return x.id === old.id ? item : x; });
-    else {
-      if (state.manual.length >= MANUAL_MAX) { $('dlgErr').textContent = '수기 항목이 너무 많습니다. 오래된 항목을 지워 주세요.'; return; }
-      state.manual.push(item);
-    }
-    var ok = storeSave();
-    $('manualDlg').close();
-    flash(!ok ? '이 브라우저에 저장하지 못했습니다. 화면을 새로 고치면 입력한 내용이 사라집니다.'
-      : item.lat == null ? '저장했습니다. 위치를 지정하지 않아 지도에는 나오지 않습니다.' : '저장했습니다.');
-    render();
+    var p = state.pick, keep = p && ((p.geo || 'pick') === 'pick' || p.addr === item.addr);
+    state.saving = true;
+    $('dlgSave').disabled = true;
+    if (!keep) { $('dlgSave').textContent = '위치 찾는 중…'; $('dlgErr').textContent = ''; }
+    (keep ? Promise.resolve(p) : geocodeAddr(item.addr, true)).then(function (g) {
+      state.saving = false;
+      $('dlgSave').disabled = false;
+      $('dlgSave').textContent = old ? '고친 내용 저장' : '저장';
+      if (g) {
+        body.lat = g.lat; body.lng = g.lng; body.geo = g.geo || 'pick';
+        body.geo_name = g.name || ''; body.geo_addr = body.geo === 'pick' ? '' : g.addr || item.addr;
+      }
+      try { item = checkItem(body, false); } catch (e) { $('dlgErr').textContent = e.message; return; }
+      if (old) state.manual = state.manual.map(function (x) { return x.id === old.id ? item : x; });
+      else state.manual.push(item);
+      var ok = storeSave();
+      if (!ok) {
+        $('manualDlg').close();
+        flash('이 브라우저에 저장하지 못했습니다. 화면을 새로 고치면 입력한 내용이 사라집니다.');
+      } else if (item.lat == null) {
+        // 저장은 했지만 위치를 못 찾음: 창을 그 항목의 수정 상태로 두고 지도에서 지정하도록 안내
+        openDialog(item.id);
+        $('dlgErr').textContent = '저장했습니다. 다만 주소로 위치를 찾지 못했습니다. 지도를 눌러 위치를 지정해 주세요.';
+      } else {
+        $('manualDlg').close();
+        flash(item.geo === 'pick' ? '저장했습니다.' : '저장했습니다. ' + GEO_TEXT[item.geo] + '(' + item.geo_name + ')에 표시했습니다.');
+      }
+      render();
+    });
   }
 
   function removeManual(id) {
@@ -1421,6 +1705,7 @@
         else skipped++;
       });
       storeSave();
+      autoFillManual(); // 좌표 없이 들어온 항목은 지명 좌표표로만 채운다(외부 호출 없음)
       render();
       openDialog(null);
       $('dlgErr').textContent = '가져오기: 새 항목 ' + added + '건, 같은 항목 덮어쓰기 ' + replaced + '건' + (skipped ? ', 건너뜀 ' + skipped + '건' : '') + icMsg;
@@ -1445,9 +1730,13 @@
       var li = el('li', state.editId === m.id ? 'on' : null);
       var line = el('div', 'ml');
       line.appendChild(el('b', null, m.disease));
-      line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species + (m.lat == null ? ' · 위치 미확인' : '')));
+      line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species));
+      var gl = el('span', 'mgeo' + (m.lat == null ? ' none' : m.geo !== 'pick' ? ' rough' : ''),
+        m.lat == null ? '위치 미확인' : GEO_TEXT[m.geo] + (m.geo !== 'pick' && m.geo_name ? ' · ' + m.geo_name : ''));
+      if (m.lat != null && m.geo !== 'pick') gl.title = '방역대 원이 실제 위치와 다를 수 있습니다. 정확한 위치를 알면 수정에서 지도로 지정하세요.';
+      line.appendChild(gl);
       li.appendChild(line);
-      li.appendChild(manualActions({ id: m.id, api_match: match[m.id] }));
+      li.appendChild(manualActions({ id: m.id, api_match: match[m.id], lat: m.lat, inDialog: true }));
       ol.appendChild(li);
     });
     $('manualCount').textContent = state.manual.length + '건';
