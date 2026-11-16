@@ -265,6 +265,7 @@ button { font: inherit; color: inherit; }
 #updated { color: var(--muted); font-size: var(--fs-meta); }
 #suppNote { color: var(--muted); font-size: 13px; cursor: help; }
 #suppNote[hidden] { display: none; }
+#stageLine { color: var(--text-2); font-size: 14px; font-weight: 600; cursor: help; text-align: right; }
 
 .notice { padding: 8px 24px; font-size: var(--fs-meta); background: var(--info-bg); color: var(--text-2); }
 .notice.warn { background: var(--watch-bg); color: var(--watch); }
@@ -725,3 +726,42 @@ body.picking #map { cursor: crosshair; }
 .ip-foot .muted { font-size: 12px; white-space: nowrap; }
 .ip-foot button { white-space: nowrap; }
 .icon-pop button:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- 발생 단계 (의심·항원·확진·종료·야생) ----------
+   배지와 왼쪽 단계 칩은 지도 표식과 같은 규칙: 확진 = 채움, 항원 = 굵은 점선, 의심 = 가는 점선, 종료 = 흐리게, 야생 = 실선 테두리 */
+.stageline { font-variant-numeric: tabular-nums; }
+.stg {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--text-2);
+  border-radius: 4px;
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 600;
+  line-height: 20px;
+  white-space: nowrap;
+  vertical-align: 2px;
+}
+.stg-confirmed { background: var(--text-2); border-color: var(--text-2); color: var(--surface); }
+.stg-antigen { border: 2px dashed var(--watch); line-height: 18px; color: var(--watch); background: var(--watch-bg); }
+.stg-suspect { border: 1px dashed var(--watch); color: var(--watch); background: var(--surface); }
+.stg-closed { border-color: var(--line-strong); color: var(--muted); background: var(--surface); }
+.stg-wild { border-color: var(--text-2); color: var(--text-2); background: var(--surface); }
+.leaflet-popup-content .stg { vertical-align: 3px; }
+.phist { margin-top: 4px; }
+.phist .k { color: var(--muted); }
+.ml .stg { margin-left: 6px; vertical-align: 1px; }
+.stage-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 6px; margin: 2px 0 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.stage-cap { padding: 4px 4px 0 2px; color: var(--text-2); font-size: var(--fs-meta); font-weight: 600; cursor: help; }
+.stage-chips { display: grid; grid-template-columns: repeat(3, auto); justify-content: space-between; gap: 0 2px; }
+.col:first-child .stage-chips .count, .stage-chips .count { grid-template-columns: 16px auto auto; gap: 4px; min-height: 28px; padding: 0 5px; font-size: 15px; }
+.stage-chips .count .n, .col:first-child .stage-chips .count .n { font-size: 16px; min-width: 1.6em; text-align: right; }
+.stage-chips .count .name { white-space: nowrap; }
+.ring.pre { border: 2px dashed var(--zone); border-style: dotted; opacity: 0.75; }
+.legend li.stage-key { grid-column: 1 / -1; flex-wrap: wrap; gap: 4px 12px; }
+.stage-key .sk { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+@media (max-height: 900px) and (min-width: 1101px) {
+  .col:first-child .stage-chips .count { min-height: 25px; }
+  .stage-row { margin-bottom: 2px; padding-top: 3px; }
+  .col:first-child .count { min-height: 27px; }
+}

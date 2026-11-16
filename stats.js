@@ -19,11 +19,17 @@
   var DIM_LABEL = { disease: '질병별', sido: '시도별', sgg: '시군구별', emd: '읍면동별', year: '연도별', ym: '월별(연-월)',
     month: '달별 계절성(1~12월 합계)', spg: '축종별(대분류)', sp: '축종별(세부)', cross: '교차표' };
   var UNKNOWN = '(미상)';
+  // 발생 단계. 기본은 확진·종료만(현황판의 확진 건수와 같은 기준, 예전 통계와 같은 숫자).
+  // 종료 = 종식일(이동제한 해제일)이 오늘이거나 지난 확진 건. 의심·항원·야생은 보도자료 자동 수집분(api/history 의 pre)과 수기 입력에만 있다.
+  var STAGES = [['confirmed', '확진'], ['closed', '종료'], ['antigen', '항원'], ['suspect', '의심'], ['wild', '야생']];
+  var STAGE_IX = {};
+  STAGES.forEach(function (x, i) { STAGE_IX[x[0]] = i; });
+  var DEFAULT_STAGES = ['confirmed', 'closed'];
 
   var H = null;          // 받아 온 원본 자료
   var D = null;          // 집계용 열 배열 (수기 포함 여부에 따라 다시 만듦)
   var state = { from: 0, to: 0, sido: '', sgg: '', dis: null, species: '', manual: false, press: true, dim: 'disease',
-    crossRow: 'disease', crossCol: 'year', metric: 'n', sort: null, quick: null };
+    crossRow: 'disease', crossCol: 'year', metric: 'n', sort: null, quick: null, stages: new Set(DEFAULT_STAGES) };
   var current = null;    // 마지막 집계 결과 (엑셀에 그대로 씀)
 
   function $(id) { return document.getElementById(id); }
@@ -71,6 +77,12 @@
 
   // 보도자료 보완 행(공공데이터에 아직 없는 발생). 서버가 원본과 같은 열·사전으로 만들어 둔다.
   function pressRows() { return H.supp && Array.isArray(H.supp.rows) ? H.supp.rows : []; }
+  // 확진 전(의심·항원)·야생 검출 행: 같은 열 + 마지막 칸이 단계
+  function preRows() {
+    var p = H.pre;
+    if (!p || !Array.isArray(p.rows)) return [];
+    return p.rows.filter(function (r) { return Array.isArray(r) && r.length >= 10 && (r[9] === 'suspect' || r[9] === 'antigen' || r[9] === 'wild'); });
+  }
 
   // 원본 + (선택 시) 보도자료 보완 + (선택 시) 수기 입력을 열 배열로 만든다. 구분: 0 공공데이터, 1 수기, 2 보도자료
   function buildData(withManual, withPress) {
@@ -85,17 +97,22 @@
     }
     var man = withManual ? manualRows(id) : [];
     var press = withPress ? pressRows() : [];
-    var n = H.rows.length + press.length + man.length;
+    var pre = withPress ? preRows() : [];
+    var n = H.rows.length + press.length + man.length + pre.length;
+    var todayInt = intOfIso(isoOf(new Date()));
     var c = { n: n, date: new Int32Array(n), dis: new Uint16Array(n), sido: new Uint16Array(n), sgg: new Uint16Array(n),
       emd: new Uint16Array(n), sp: new Uint16Array(n), cnt: new Float64Array(n), ag: new Uint16Array(n), end: new Int32Array(n),
-      manual: new Uint8Array(n), dict: dict };
+      manual: new Uint8Array(n), stg: new Uint8Array(n), dict: dict };
     function put(i, r, m) {
       c.date[i] = r[0]; c.dis[i] = r[1]; c.sido[i] = r[2]; c.sgg[i] = r[3]; c.emd[i] = r[4]; c.sp[i] = r[5];
       c.cnt[i] = r[6] == null ? NaN : r[6]; c.ag[i] = r[7]; c.end[i] = r[8] || 0; c.manual[i] = m;
+      var st = r[9] === 'suspect' || r[9] === 'antigen' || r[9] === 'wild' ? r[9] : r[8] && r[8] <= todayInt ? 'closed' : 'confirmed';
+      c.stg[i] = STAGE_IX[st];
     }
     H.rows.forEach(function (r, i) { put(i, r, 0); });
     press.forEach(function (r, j) { put(H.rows.length + j, r, 2); });
     man.forEach(function (r, j) { put(H.rows.length + press.length + j, r, 1); });
+    pre.forEach(function (r, j) { put(H.rows.length + press.length + man.length + j, r, 2); });
     // 시군구는 같은 이름이 여러 시도에 있으므로(중구, 남구, 고성군 등) 시도와 묶어 키를 만든다
     var keyMap = new Map(), keys = [];
     c.sk = new Uint16Array(n);
@@ -125,7 +142,7 @@
       var cnt = m.count == null || m.count === '' ? null : Number(m.count);
       out.push([intOfIso(m.date), id('disease', dis), id('sido', a.sido), id('sgg', a.sgg), id('emd', a.emd),
         id('species', String(m.species || '').trim()), isFinite(cnt) ? cnt : null, id('agency', ''),
-        typeof m.end === 'string' ? intOfIso(m.end) : 0]);
+        typeof m.end === 'string' ? intOfIso(m.end) : 0, m.stage === 'suspect' || m.stage === 'antigen' ? m.stage : '']);
     });
     return out;
   }
@@ -221,6 +238,36 @@
       fillSpecies();
       update();
     });
+
+    // 발생 단계
+    var stc = {};
+    STAGES.forEach(function (x) { stc[x[0]] = 0; });
+    H.rows.concat(pressRows()).forEach(function (r) { stc[r[8] && r[8] <= intOfIso(isoOf(new Date())) ? 'closed' : 'confirmed']++; });
+    preRows().forEach(function (r) { stc[r[9]]++; });
+    var sl = $('stageList');
+    STAGES.forEach(function (x) {
+      var li = el('li'), lab = el('label', 'st-check'), cb = el('input');
+      cb.type = 'checkbox'; cb.value = x[0]; cb.checked = state.stages.has(x[0]);
+      cb.addEventListener('change', function () {
+        if (cb.checked) state.stages.add(x[0]); else state.stages.delete(x[0]);
+        syncStagePresets();
+        update();
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(' ' + x[1] + ' '));
+      lab.appendChild(el('span', 'muted', '(' + fmt(stc[x[0]]) + ')'));
+      li.appendChild(lab);
+      sl.appendChild(li);
+    });
+    Array.prototype.forEach.call($('stagePresets').querySelectorAll('button'), function (b) {
+      b.addEventListener('click', function () {
+        state.stages = new Set(b.getAttribute('data-s') === 'all' ? STAGES.map(function (x) { return x[0]; }) : DEFAULT_STAGES);
+        Array.prototype.forEach.call(sl.querySelectorAll('input'), function (cb) { cb.checked = state.stages.has(cb.value); });
+        syncStagePresets();
+        update();
+      });
+    });
+    syncStagePresets();
 
     // 보도자료 보완
     var pcount = pressRows().length;
@@ -386,9 +433,12 @@
       spOk = new Uint8Array(dict.species.length);
       dict.species.forEach(function (s, i) { spOk[i] = (kind === 'g' ? speciesGroup(s) === v : s === v) ? 1 : 0; });
     }
+    var stOk = new Uint8Array(STAGES.length);
+    STAGES.forEach(function (x, i) { stOk[i] = state.stages.has(x[0]) ? 1 : 0; });
     for (var i = 0; i < D.n; i++) {
       var d = D.date[i];
       if (d < state.from || d > state.to) continue;
+      if (!stOk[D.stg[i]]) continue;
       if (!disOk[D.dis[i]]) continue;
       if (state.sido && D.sido[i] !== sidoI) continue;
       if (skOk && !skOk[D.sk[i]]) continue;
@@ -511,18 +561,24 @@
     idx.forEach(function (i) { var c = D.cnt[i]; if (c === c) heads += c; else missing++; });
     current.heads = heads;
     current.missing = missing;
-    current.pressN = idx.filter(function (i) { return D.manual[i] === 2; }).length;
+    current.pressN = idx.filter(function (i) { return D.manual[i] === 2 && D.stg[i] <= 1; }).length;
 
     $('sumN').textContent = fmt(idx.length) + '건';
     $('sumHeads').textContent = fmt(heads) + '두';
     $('sumCond').textContent = condText();
     if (!state.dis.size) notice('질병을 하나 이상 고르세요.', 'warn');
+    else if (!state.stages.size) notice('발생 단계를 하나 이상 고르세요.', 'warn');
     else notice('');
 
     drawChart(current.agg);
     drawTable(current.agg);
     drawRaw(idx);
     window.__statsRenderMs = Math.round(performance.now() - t0);
+  }
+  function syncStagePresets() {
+    var all = state.stages.size === STAGES.length;
+    var def = state.stages.size === 2 && state.stages.has('confirmed') && state.stages.has('closed');
+    pressed($('stagePresets'), 'data-s', all ? 'all' : def ? 'default' : null);
   }
   function pressed(box, attr, val) {
     Array.prototype.forEach.call(box.querySelectorAll('button'), function (b) {
@@ -531,7 +587,13 @@
   }
   function condText() {
     return isoOfInt(state.from) + ' ~ ' + isoOfInt(state.to) + ' · ' + regionLabel() + ' · ' + diseaseLabel() + ' · ' + speciesLabel() +
-      (state.manual ? ' · 수기 입력 포함' : '') + (state.press && pressRows().length ? ' · 보도자료 보완 포함' : '');
+      (state.manual ? ' · 수기 입력 포함' : '') + (state.press && pressRows().length ? ' · 보도자료 보완 포함' : '') + ' · 단계: ' + stageLabel();
+  }
+  function stageLabel() {
+    var on = STAGES.filter(function (x) { return state.stages.has(x[0]); }).map(function (x) { return x[1]; });
+    if (!on.length) return '없음';
+    var def = on.length === 2 && state.stages.has('confirmed') && state.stages.has('closed');
+    return on.join('·') + (def ? '(기본)' : '');
   }
   function dimText() {
     if (state.dim !== 'cross') return DIM_LABEL[state.dim];
@@ -657,11 +719,12 @@
   }
 
   var RAW_PREVIEW = 300;
-  var RAW_HEAD = ['발생일', '질병명', '시도', '시군구', '읍면동', '축종', '두수', '진단기관', '종료일', '구분'];
+  var RAW_HEAD = ['발생일', '질병명', '시도', '시군구', '읍면동', '축종', '두수', '진단기관', '종료일', '구분', '단계'];
   function rawRow(i) {
     var d = D.dict, sk = D.sgKeys[D.sk[i]], c = D.cnt[i];
     return [isoOfInt(D.date[i]), d.disease[D.dis[i]], sk.sido, sk.sgg, d.emd[D.emd[i]], d.species[D.sp[i]],
-      c === c ? c : null, d.agency[D.ag[i]], isoOfInt(D.end[i]), D.manual[i] === 1 ? '수기' : D.manual[i] === 2 ? '보도자료' : '공공데이터'];
+      c === c ? c : null, d.agency[D.ag[i]], isoOfInt(D.end[i]), D.manual[i] === 1 ? '수기' : D.manual[i] === 2 ? '보도자료' : '공공데이터',
+      STAGES[D.stg[i]][1]];
   }
   function drawRaw(idx) {
     var wrap = $('rawWrap');
@@ -705,6 +768,7 @@
       ['질병', diseaseLabel()],
       ['축종', speciesLabel()],
       ['집계 기준', dimText()],
+      ['발생 단계', stageLabel() + '. 종료 = 종식일이 지난 확진 건. 의심·항원·야생은 보도자료 자동 수집과 수기 입력에만 있음(공공데이터는 확진만 제공). 원자료 시트 "단계" 열'],
       ['수기 입력', state.manual ? '포함(이 PC의 브라우저에 저장된 항목)' : '제외'],
       ['보도자료 보완', !pressRows().length ? '없음' : state.press ?
         '포함: 공공데이터에 아직 없는 ' + fmt(pressRows().length) + '건(이 조건에 ' + fmt(current.pressN) + '건). 원자료 시트 "구분" 열이 "보도자료"인 행' :
@@ -730,12 +794,12 @@
     idx.forEach(function (i) {
       var r = rawRow(i);
       raw.push([{ v: r[0], t: 'date' }, r[1], r[2], r[3], r[4], r[5], r[6] == null ? null : { v: r[6], t: 'num' }, r[7],
-        r[8] ? { v: r[8], t: 'date' } : null, r[9]]);
+        r[8] ? { v: r[8], t: 'date' } : null, r[9], r[10]]);
     });
     return [
       { name: '조건', cols: [16, 90], rows: cond },
       { name: '통계', cols: statCols, rows: stat, freeze: 1 },
-      { name: '원자료', cols: [12, 26, 16, 12, 12, 16, 10, 22, 12, 10], rows: raw, freeze: 1, autoFilter: true }
+      { name: '원자료', cols: [12, 26, 16, 12, 12, 16, 10, 22, 12, 10, 8], rows: raw, freeze: 1, autoFilter: true }
     ];
   }
   function fileName() {

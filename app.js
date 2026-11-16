@@ -14,6 +14,29 @@
     { id: 'bru', name: '브루셀라', token: '--d-bru', shape: 'dot', core: false, match: ['브루셀라'] },
     { id: 'etc', name: '기타 전염병', token: '--d-etc', shape: 'dot', core: false, match: [] }
   ];
+  // 발생 단계. 모든 항목에 st 를 매긴다(stageOf). 질병 색·모양은 그대로 두고 단계는 표식의 테두리·채움으로 나눈다.
+  // 건수·통계·상황 판정·그래프는 확진(confirmed)과 종료(closed)만 센다. 의심·항원·야생은 따로 센다.
+  var STAGES = [
+    { id: 'confirmed', name: '확진', tip: '확진된 발생(공공데이터, 보도자료 보완, 수기 입력)' },
+    { id: 'antigen', name: '항원', tip: '항원·양성 검출, 고병원성 여부 등 정밀검사 중(확진 전)' },
+    { id: 'suspect', name: '의심', tip: '의심 신고(의사환축) 접수, 검사 중(확진 전)' },
+    { id: 'closed', name: '종료', tip: '종식일(이동제한 해제일)이 지난 확진 건' },
+    { id: 'wild', name: '야생', tip: '야생동물 검출(농장 발생이 아님)' }
+  ];
+  var STAGE_NAME = {};
+  STAGES.forEach(function (x) { STAGE_NAME[x.id] = x.name; });
+  var PRE = { suspect: true, antigen: true };
+  var STAGE_DATE = { confirmed: '확진일 ', closed: '확진일 ', antigen: '항원 확인 ', suspect: '의심 신고 ', wild: '검출 ' };
+  function stageOf(it, today) {
+    if (it.stage === 'suspect' || it.stage === 'antigen' || it.stage === 'wild') return it.stage;
+    return it.end && it.end <= today ? 'closed' : 'confirmed';
+  }
+  function isCase(it) { return it.st === 'confirmed' || it.st === 'closed'; }
+  function stageBadge(st) {
+    var b = el('span', 'stg stg-' + st, STAGE_NAME[st] || st);
+    STAGES.forEach(function (x) { if (x.id === st) b.title = x.tip; });
+    return b;
+  }
   var HOME_GUESS_KM = 15;      // 시군 이름 없이 입력한 수기 주소를 관내로 볼 시청 거리
   var ZONE_DAYS = 30;          // 방역대와 경보 단계를 보는 기간
   var WATCH_KM = 50;           // 주의: 도내 또는 50km 안
@@ -37,16 +60,19 @@
     manual: [], storeOk: true, editId: null, pick: null, pickPrev: null, picking: false, pickMarker: null, flash: null,
     saving: false };
   GROUPS.forEach(function (g) { state.shown[g.id] = g.core; });
+  state.stageShown = {};
+  STAGES.forEach(function (x) { state.stageShown[x.id] = true; });
   try {
     var saved = JSON.parse(localStorage.getItem('dash') || '{}');
     state.range = cleanRange(saved.range) || (Number.isInteger(saved.days) && saved.days > 0 ? { mode: 'rel', days: saved.days } : state.range);
     if (saved.shown) Object.keys(saved.shown).forEach(function (k) { if (k in state.shown) state.shown[k] = !!saved.shown[k]; });
     // 시설은 종류(type) 이름으로 기억한다. 처음 보는 종류는 켜진 상태로 시작한다.
     if (saved.facShown && typeof saved.facShown === 'object') Object.keys(saved.facShown).forEach(function (k) { state.facShown[k] = !!saved.facShown[k]; });
+    if (saved.stageShown && typeof saved.stageShown === 'object') Object.keys(saved.stageShown).forEach(function (k) { if (k in state.stageShown) state.stageShown[k] = !!saved.stageShown[k]; });
   } catch (e) { /* 저장값이 없어도 동작 */ }
 
   function save() {
-    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown, facShown: state.facShown })); } catch (e) { /* 무시 */ }
+    try { localStorage.setItem('dash', JSON.stringify({ range: state.range, shown: state.shown, facShown: state.facShown, stageShown: state.stageShown })); } catch (e) { /* 무시 */ }
   }
   // 저장해 둔 기간 값 검사(형식이 틀리면 null)
   function cleanRange(r) {
@@ -98,8 +124,11 @@
   function fx(list) { return list.map(function (v) { return Number(v.toFixed(2)); }).join(' '); }
 
   // 질병 모양 아이콘 (색과 모양을 함께 써서 구분). g 는 { shape, color } 를 가진 값(GROUPS 항목 또는 미리보기용)
-  function shapeIcon(g, size, faded) {
+  // st(발생 단계)는 모양·색을 바꾸지 않고 채움과 테두리로 나눈다: 확진 = 채움+실선, 항원 = 옅은 채움+굵은 점선,
+  // 의심 = 속 빈 흰 바탕+가는 점선, 종료 = 흐리게, 야생 = 속 빈 흰 바탕+실선+가운데 점
+  function shapeIcon(g, size, faded, st) {
     var s = size, h = s / 2, w = Math.max(1.5, s / 9);
+    if (st === 'antigen') w = Math.max(2.6, s / 6.5);
     var box = svg('svg', { width: s, height: s, viewBox: '0 0 ' + s + ' ' + s, 'aria-hidden': 'true', 'class': 'shape' });
     var m = w / 2 + 0.5, node, R = h - m;
     if (g.shape === 'circle') node = svg('circle', { cx: h, cy: h, r: h - m });
@@ -125,7 +154,26 @@
     node.setAttribute('stroke-width', w);
     node.setAttribute('stroke-linejoin', 'round');
     if (faded) node.setAttribute('fill-opacity', '0.5');
+    var ink = isLight(g.color) ? token('--marker-edge') : g.color;
+    if (st === 'antigen') {
+      node.setAttribute('fill-opacity', '0.35');
+      node.setAttribute('stroke', ink);
+      node.setAttribute('stroke-dasharray', fx([w * 1.1, w * 0.8]));
+    } else if (st === 'suspect') {
+      node.setAttribute('fill', token('--surface'));
+      node.setAttribute('fill-opacity', '0.9');
+      node.setAttribute('stroke', ink);
+      node.setAttribute('stroke-width', Math.max(1.4, s / 13));
+      node.setAttribute('stroke-dasharray', fx([Math.max(1.6, s / 11), Math.max(1.6, s / 11)]));
+    } else if (st === 'closed') {
+      node.setAttribute('fill-opacity', '0.22');
+      node.setAttribute('stroke-opacity', '0.45');
+    } else if (st === 'wild') {
+      node.setAttribute('fill', token('--surface'));
+      node.setAttribute('stroke', ink);
+    }
     box.appendChild(node);
+    if (st === 'wild') box.appendChild(svg('circle', { cx: h, cy: h + (g.shape === 'triangle' ? s * 0.1 : g.shape === 'invtri' ? -s * 0.1 : 0), r: Math.max(1.6, s * 0.13), fill: ink }));
     return box;
   }
 
@@ -495,11 +543,17 @@
 
   function popup(it) {
     var box = el('div');
+    var st = it.st || 'confirmed', pre = !!PRE[st];
     box.appendChild(el('b', null, it.disease));
+    box.appendChild(document.createTextNode(' '));
+    box.appendChild(stageBadge(st));
     var press = it.source === 'press';
     if (press) { box.appendChild(document.createTextNode(' ')); box.appendChild(el('span', 'ptag', '보도자료')); }
+    var zoneNote = '';
+    if (pre && it.g && it.g.core && it.ago < ZONE_DAYS) zoneNote = '점선 원은 확진되면 적용될 방역대의 예정 범위입니다(아직 확정 아님)';
     var lines = [
-      (press ? '확진일 ' : '발생일 ') + it.date + (it.end ? ', 종식 ' + it.end : ''),
+      (it.source === 'press' || it.source === 'manual' || pre || st === 'wild' ? STAGE_DATE[st] : '발생일 ') + it.date +
+        (it.end && !pre && st !== 'wild' ? ', 종식 ' + it.end : ''),
       it.addr,
       press ? pressHeads(it) :
       it.species ? it.species + (Number(it.count) > 0 ? ' ' + Number(it.count).toLocaleString('ko-KR') + '마리' : '') : '',
@@ -507,13 +561,37 @@
       it.km != null ? '시청에서 ' + fmtKm(it.km) : '',
       it.geo === 'area' ? '읍면동 중심 좌표라 실제 위치와 다를 수 있습니다' : '',
       it.geo === 'sgg' ? '보도자료에 시군구까지만 나와 시군구 중심에 표시했습니다' : '',
+      pre ? '확진 전 단계라 발생 건수와 통계에 넣지 않습니다. 확진되면 확진으로 바뀝니다.' : '',
+      st === 'wild' ? '야생동물 검출이라 농장 발생 건수에 넣지 않습니다.' : '',
+      st === 'closed' ? '종식(이동제한 해제)된 건이라 방역대를 그리지 않습니다.' : '',
+      zoneNote,
       press && it.note ? it.note : '',
       it.source === 'manual' ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
       it.source === 'manual' && it.mgeo ? GEO_TEXT[it.mgeo] + (it.mgeo !== 'pick' && it.geo_name ? ': ' + it.geo_name : '') : '',
-      it.source === 'manual' && approxGeo(it) ? '주소로 찾은 대략의 위치라 방역대 원(점선)이 실제 범위와 다를 수 있습니다' : '',
+      it.source === 'manual' && approxGeo(it) && !pre ? '주소로 찾은 대략의 위치라 방역대 원(점선)이 실제 범위와 다를 수 있습니다' : '',
       it.memo ? '메모: ' + it.memo : ''
     ];
     lines.filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
+    var hist = (it.history || []).filter(function (h) { return h && STAGE_NAME[h.stage] && ISO_RE.test(h.date); });
+    if (hist.length) {
+      var hb = el('div', 'phist');
+      hb.appendChild(el('span', 'k', '단계 이력 '));
+      hist.forEach(function (h, i) {
+        if (i) hb.appendChild(document.createTextNode(' → '));
+        var t = STAGE_NAME[h.stage] + '\u00a0' + shortDate(h.date);
+        if (h.url && /^https:\/\//.test(h.url)) {
+          var a = el('a', null, t);
+          a.href = h.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+          a.title = (h.source || '출처') + ' 보기';
+          hb.appendChild(a);
+        } else {
+          var sp = el('span', null, t);
+          if (h.source) sp.title = h.source;
+          hb.appendChild(sp);
+        }
+      });
+      box.appendChild(hb);
+    }
     if (press) {
       var src = el('div', 'psrc', '출처: ');
       if (it.url) {
@@ -521,7 +599,7 @@
         a.href = it.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
         src.appendChild(a);
       } else src.appendChild(document.createTextNode(it.source_name || '농림축산식품부 보도자료'));
-      src.appendChild(document.createTextNode(' (공공데이터에 아직 없음)'));
+      if (isCase(it)) src.appendChild(document.createTextNode(' (공공데이터에 아직 없음)'));
       box.appendChild(src);
     }
     return box;
@@ -541,84 +619,60 @@
     state.markers = {};
     var zone = token('--zone');
     // 오래된 것부터 그려 최근 발생이 위에 오도록
+    // 방역대: 확진(미종식)은 실선(주소로 찾은 대략의 위치면 점선), 확진 전(의심·항원)은 예정 범위라 세 원 모두 성긴 점선, 종료·야생은 없음
     shown.slice().reverse().forEach(function (it) {
       if (it.lat == null || it.lng == null) return;
-      var g = it.g, fresh = it.ago < ZONE_DAYS;
-      if (g.core && fresh && !it.end) {
+      var g = it.g, fresh = it.ago < ZONE_DAYS, st = it.st || 'confirmed', pre = !!PRE[st];
+      if (g.core && fresh && ((st === 'confirmed' && !it.end) || pre)) {
         var rough = approxGeo(it); // 주소로 찾은 대략의 위치면 세 원을 모두 점선으로
         [[10000, 0.04, '6 6', 1], [3000, 0.08, null, 1.5], [500, 0.3, null, 1]].forEach(function (z) {
           L.circle([it.lat, it.lng], {
-            radius: z[0], color: zone, weight: z[3], opacity: 0.75, dashArray: rough ? '4 6' : z[2],
-            fillColor: zone, fillOpacity: z[1], interactive: false
+            radius: z[0], color: zone, weight: pre ? 1.5 : z[3], opacity: pre ? 0.7 : 0.75, dashArray: pre ? '2 8' : rough ? '4 6' : z[2],
+            fillColor: zone, fillOpacity: pre ? z[1] * 0.4 : z[1], interactive: false
           }).addTo(state.layer);
         });
       }
-      var size = g.core ? 22 : 14;
-      var icon = shapeIcon(g, size, !fresh);
+      var size = st === 'wild' ? 16 : g.core ? 22 : 14;
+      var icon = shapeIcon(g, size, st === 'confirmed' && !fresh, st);
       icon.setAttribute('class', 'mk');
       var m = L.marker([it.lat, it.lng], {
         icon: L.divIcon({ className: '', html: icon, iconSize: [size, size], iconAnchor: [size / 2, size / 2] }),
-        zIndexOffset: g.core ? 500 : 0, title: it.disease + ' ' + it.date, alt: it.disease
+        // 확진 전 표식은 시청 핀·시설 표지(2000~2500)보다 위에 둔다(시군구 중심 좌표면 시청과 겹침)
+        zIndexOffset: pre ? 2600 : st === 'confirmed' && g.core ? 500 : st === 'wild' ? 300 : 0,
+        title: it.disease + ' ' + STAGE_NAME[st] + ' ' + it.date, alt: it.disease + ' ' + STAGE_NAME[st]
       }).bindPopup(popup(it)).addTo(state.layer);
       state.markers[it.id] = m;
     });
   }
 
-  // ---------------------------------------------------------------- 확진 전(의심·항원), 야생동물 검출
-  // 보도자료 자동 수집분 중 아직 확진되지 않은 건(data.suspects)과 야생동물 검출(data.wild).
-  // 질병별 건수, 관내·도내·전국 숫자, 상황 판정, 그래프에는 넣지 않고 지도 표지와 위쪽 띠로만 보여 준다.
+  // ---------------------------------------------------------------- 확진 전(의심·항원), 야생동물 검출 알림 띠
+  // 지도 표식은 drawMap 이 단계 모양으로 그린다. 여기서는 위쪽 띠만: 확진 전 건(보도자료 자동 수집분 최근 21일 + 수기 입력)과
+  // 최근 30일 야생동물 검출. 관내 확진 전 건이 있으면 빨간 띠로 맨 위에 둔다.
   var EXTRA_WILD_DAYS = 30;
-  function extraPopup(it, stage) {
-    var box = el('div');
-    box.appendChild(el('b', null, it.disease));
-    box.appendChild(document.createTextNode(' '));
-    box.appendChild(el('span', 'ptag', stage === 'suspect' ? '확진 전' : '야생'));
-    [
-      (stage === 'suspect' ? '항원 확인 ' : '검출 ') + it.date,
-      it.addr,
-      it.species,
-      stage === 'suspect' ? '확진 전(의심·항원) 단계라 발생 건수와 통계에 넣지 않습니다. 확진되면 발생으로 바뀝니다.'
-        : '야생동물 검출이라 농장 발생 건수에 넣지 않습니다.',
-      it.note
-    ].filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
-    var src = el('div', 'psrc', '출처: ');
-    if (it.url) {
-      var a = el('a', null, it.source_name || '보도자료');
-      a.href = it.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      src.appendChild(a);
-    } else src.appendChild(document.createTextNode(it.source_name || '보도자료'));
-    box.appendChild(src);
-    return box;
-  }
-  function drawExtras(data, cur, home) {
-    var sus = (data.suspects || []).filter(function (it) { return it && it.date; });
-    var wild = (data.wild || []).filter(function (it) { return it && it.date && it.date >= cur.start && it.date <= cur.end; });
-    var watch = token('--watch'), muted = token('--text-2');
-    function mark(it, stage) {
-      if (it.lat == null || it.lng == null) return;
-      L.circleMarker([it.lat, it.lng], stage === 'suspect'
-        ? { radius: 11, color: watch, weight: 3, dashArray: '4 4', fillColor: watch, fillOpacity: 0.15 }
-        : { radius: 6, color: muted, weight: 2, fillColor: muted, fillOpacity: 0.45 })
-        .bindPopup(extraPopup(it, stage)).addTo(state.layer);
-    }
-    sus.forEach(function (it) { mark(it, 'suspect'); });
-    wild.forEach(function (it) { mark(it, 'wild'); });
+  function drawExtras(list, home) {
     var box = $('extraNote');
     box.textContent = '';
-    var homeHit = false;
-    function line(it, stage) {
+    var homeHit = false, nPre = 0;
+    function line(it) {
+      var st = it.st, pre = !!PRE[st];
       var inHome = (it.addr || '').indexOf(home.name) >= 0;
-      if (inHome && stage === 'suspect') homeHit = true;
+      if (inHome && pre) homeHit = true;
+      if (pre) nPre++;
       var row = el('div', 'check-row' + (inHome ? ' home' : ''));
       var t = el('span', null, '');
-      t.appendChild(el('b', null, (inHome ? home.name + ' 관내 ' : '') + (stage === 'suspect' ? '확진 전(의심·항원): ' : '야생동물 검출: ')));
-      t.appendChild(document.createTextNode(it.disease + ' · ' + (it.addr || '') + (it.species ? ' · ' + it.species : '') + ' · ' + md(it.date)));
-      t.appendChild(el('span', 'check-sub', stage === 'suspect' ? ' (확진 건수에 넣지 않음)' : ' (농장 발생 건수에 넣지 않음)'));
+      t.appendChild(el('b', null, (inHome ? home.name + ' 관내 ' : '') + (pre ? '확진 전(' + STAGE_NAME[st] + '): ' : '야생동물 검출: ')));
+      t.appendChild(document.createTextNode(it.disease + ' · ' + (it.addr || '') + (it.species ? ' · ' + it.species : '') + ' · ' + md(it.date) +
+        (it.source === 'manual' ? ' · 수기 입력' : '')));
+      t.appendChild(el('span', 'check-sub', pre ? ' (확진 건수에 넣지 않음)' : ' (농장 발생 건수에 넣지 않음)'));
       row.appendChild(t);
       if (it.lat != null) {
         var go = el('button', null, '지도에서 보기');
         go.type = 'button';
-        go.addEventListener('click', function () { state.map.setView([it.lat, it.lng], Math.max(state.map.getZoom(), 11)); });
+        go.addEventListener('click', function () {
+          var m = state.markers[it.id];
+          state.map.setView([it.lat, it.lng], Math.max(state.map.getZoom(), 11));
+          if (m) m.openPopup();
+        });
         row.appendChild(go);
       }
       if (it.url) {
@@ -628,13 +682,12 @@
       }
       return row;
     }
-    var rows = sus.map(function (it) { return line(it, 'suspect'); }).concat(
-      wild.filter(function (it) { return daysAgo(it.date) <= EXTRA_WILD_DAYS; }).map(function (it) { return line(it, 'wild'); }));
+    var rows = list.filter(function (it) { return PRE[it.st] || (it.st === 'wild' && it.ago <= EXTRA_WILD_DAYS); }).map(line);
     rows.sort(function (a, b) { return (b.classList.contains('home') ? 1 : 0) - (a.classList.contains('home') ? 1 : 0); });
     rows.forEach(function (r) { box.appendChild(r); });
     box.hidden = !rows.length;
-    box.className = 'notice check-note extra-note' + (homeHit ? ' alert' : sus.length ? ' warn' : '');
-    box.title = '보도자료에서 자동으로 읽은 확진 전 건(최근 21일)과 야생동물 검출(최근 ' + EXTRA_WILD_DAYS + '일). 공식 집계가 아닙니다.';
+    box.className = 'notice check-note extra-note' + (homeHit ? ' alert' : nPre ? ' warn' : '');
+    box.title = '보도자료에서 자동으로 읽은 확진 전 건(최근 21일)과 수기 입력한 확진 전 건, 야생동물 검출(최근 ' + EXTRA_WILD_DAYS + '일). 공식 집계가 아닙니다.';
   }
 
   // ---------------------------------------------------------------- 막대그래프
@@ -925,8 +978,10 @@
     var hasPos = state.markers[it.id] != null;
     var r = el(hasPos ? 'button' : 'div', 'row');
     if (hasPos) r.type = 'button';
-    r.appendChild(shapeIcon(it.g, 18));
+    r.appendChild(shapeIcon(it.g, 18, false, it.st));
     var t = el('span', 't', label(it));
+    t.appendChild(document.createTextNode(' '));
+    t.appendChild(stageBadge(it.st || 'confirmed'));
     if (it.source === 'manual') { t.appendChild(document.createTextNode(' ')); t.appendChild(el('span', 'mtag', '수기')); }
     if (it.source === 'press') {
       t.appendChild(document.createTextNode(' '));
@@ -1029,19 +1084,25 @@
   function render() {
     var data = state.data;
     if (!data) return;
-    var home = data.home;
-    var all = (data.items || []).concat(manualItems()).map(function (it) {
+    var home = data.home, todayIso = isoOf(today0());
+    // 확진·종료(items, 수기 확진) + 확진 전·야생(suspects, wild, 수기 의심·항원)을 한 목록으로 만든 뒤 단계로 나눈다
+    var every = (data.items || []).concat(manualItems(), data.suspects || [], data.wild || []).filter(function (it) {
+      return it && it.date;
+    }).map(function (it) {
       it.g = groupOf(it.disease);
       it.ago = daysAgo(it.date);
       it.addr = it.addr || '';
       it.km = it.lat != null && it.lng != null ? km(home.lat, home.lng, it.lat, it.lng) : null;
+      it.st = stageOf(it, todayIso);
       return it;
     }).filter(function (it) { return it.ago >= 0; });
-    markApiMatch(all);
-    all.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+    markApiMatch(every);
+    every.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+    var all = every.filter(isCase), preAll = every.filter(function (it) { return !isCase(it); });
     var cur = currentRange();
     state.dayKey = cur.today;
-    var items = all.filter(function (it) { return it.date >= cur.start && it.date <= cur.end; });
+    function inRange(it) { return it.date >= cur.start && it.date <= cur.end; }
+    var items = all.filter(inRange), preItems = preAll.filter(inRange);
 
     var rs = regionShortOf(home.region);
     // 수기 주소에 시군 이름이 없으면(예: "안강읍 산대리") 찍은 위치로 관내를 짐작한다
@@ -1107,11 +1168,49 @@
       ul.appendChild(li);
     });
 
-    // 지도와 막대그래프
-    var shown = items.filter(function (it) { return state.shown[it.g.id]; });
+    // 발생 단계별 건수 (켜고 끄기). 건수는 질병 켜고 끄기와 관계없이 조회 기간 안 전체
+    var stc = {};
+    STAGES.forEach(function (x) { stc[x.id] = 0; });
+    items.concat(preItems).forEach(function (it) { stc[it.st]++; });
+    var su = $('stageCounts');
+    su.textContent = '';
+    STAGES.forEach(function (x) {
+      var on = state.stageShown[x.id] !== false;
+      var li = el('li', 'count-wrap' + (on ? '' : ' off'));
+      var b = el('button', 'count stage-count' + (stc[x.id] ? '' : ' zero'));
+      b.type = 'button';
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.title = x.tip + '\n' + (on ? '지도와 최근 발생 목록에서 숨기기' : '지도와 최근 발생 목록에 표시하기');
+      b.appendChild(shapeIcon({ shape: 'circle', color: token('--map-ink') }, 18, false, x.id));
+      b.appendChild(el('span', 'name', x.name));
+      b.appendChild(el('span', 'n', String(stc[x.id])));
+      b.addEventListener('click', function () { state.stageShown[x.id] = !on; save(); render(); });
+      li.appendChild(b);
+      su.appendChild(li);
+    });
+    var nPre = stc.suspect + stc.antigen;
+    var key = $('stageKey');
+    key.textContent = '';
+    STAGES.forEach(function (x) {
+      var sk = el('span', 'sk');
+      sk.title = x.tip;
+      sk.appendChild(shapeIcon({ shape: 'circle', color: token('--map-ink') }, 16, false, x.id));
+      sk.appendChild(document.createTextNode(x.name));
+      key.appendChild(sk);
+    });
+    $('stageLine').textContent = '확진 ' + (stc.confirmed + stc.closed) + '건' + (stc.closed ? '(종료 ' + stc.closed + ' 포함)' : '') +
+      ' · 확진 전 ' + nPre + '건(의심 ' + stc.suspect + ', 항원 ' + stc.antigen + ') · 야생 검출 ' + stc.wild + '건';
+    $('stageLine').title = cur.name + ' 기준. 확진 건수·통계·상황 판정에는 확진(종료 포함)만 셉니다. 확진 전(의심·항원)과 야생 검출은 따로 셉니다. ' +
+      '확진 전 단계는 보도자료 자동 수집과 수기 입력에서만 나옵니다(공공데이터는 확진만 제공).';
+
+    // 지도와 막대그래프. 그래프와 건수는 확진·종료만(단계 켜고 끄기와 무관), 지도와 목록은 단계 켜고 끄기를 따른다
+    function stageOn(it) { return state.stageShown[it.st] !== false; }
+    var caseShown = items.filter(function (it) { return state.shown[it.g.id]; });
+    var shown = caseShown.filter(stageOn).concat(preItems.filter(function (it) { return state.shown[it.g.id] && stageOn(it); }));
+    shown.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     drawMap(shown);
-    drawExtras(data, cur, home);
-    drawChart(shown, all);
+    drawExtras(preAll.filter(function (it) { return !PRE[it.st] || it.ago <= 21; }), home);
+    drawChart(caseShown, all);
 
     // 최근 발생 (좌표가 없어도 목록에는 표시)
     var recent = $('recent');
@@ -1122,7 +1221,7 @@
       recent.appendChild(row(it, el('span', 'd', shortDate(it.date)), [it.addr, it.species, tag], null, true));
     });
     $('recentCount').textContent = shown.length > 40 ? shown.length + '건 중 40건' : shown.length + '건';
-    if (!shown.length) recent.appendChild(el('li', 'empty', '선택한 기간과 질병에 해당하는 발생이 없습니다'));
+    if (!shown.length) recent.appendChild(el('li', 'empty', '선택한 기간과 질병·단계에 해당하는 발생이 없습니다'));
 
     // 기준 지역 숫자
     var nHome = items.filter(inHome).length;
@@ -1146,16 +1245,17 @@
     }
 
     drawResources(data.resources);
-    renderManualList(all);
+    renderManualList(every);
     if (pop.el) fillIconPop();
 
-    var unloc = items.filter(function (it) { return it.lat == null; }).length;
+    var unloc = shown.filter(function (it) { return it.lat == null; }).length;
     $('unlocated').textContent = unloc ? '위치를 아직 찾지 못한 ' + unloc + '건은 지도에서 빠지고 목록에만 나옵니다.' : '';
   }
 
   // ---------------------------------------------------------------- 수기 입력 (이 PC의 브라우저에만 저장)
   // 공공데이터에 아직 안 올라온 발생을 담당자가 먼저 넣는다. 서버나 외부로 아무것도 보내지 않는다.
   var STORE_KEY = 'dash-manual';
+  var MANUAL_STAGES = { suspect: '의심 신고', antigen: '항원 검출', confirmed: '확진' };
   var MANUAL_MAX = 500;
   var DISEASE_OF = { fmd: '구제역', hpai: '고병원성조류인플루엔자', asf: '아프리카돼지열병', lsd: '럼피스킨병', tb: '결핵병', bru: '브루셀라병' };
   var CORE_WORDS = ['구제역', '고병원성', '아프리카돼지열병', '럼피스킨', '결핵', '브루셀라'];
@@ -1218,6 +1318,13 @@
     }
     var d = date('date', '발생일', true), end = date('end', '종료일', false);
     if (end && end < d) throw new Error('종료일이 발생일보다 앞섭니다.');
+    // 단계: 의심 신고·항원 검출·확진. 이 칸이 없는 예전 항목과 예전 내보내기 파일은 확진으로 읽는다
+    var stage = x.stage == null || x.stage === '' ? 'confirmed' : x.stage;
+    if (!MANUAL_STAGES[stage]) { if (!loose) throw new Error('단계를 목록에서 골라 주세요.'); stage = 'confirmed'; }
+    var stageDate = typeof x.stage_date === 'string' && ISO_RE.test(x.stage_date) ? x.stage_date : d;
+    var history = (Array.isArray(x.history) ? x.history : []).filter(function (h) {
+      return h && MANUAL_STAGES[h.stage] && typeof h.date === 'string' && ISO_RE.test(h.date);
+    }).slice(-10).map(function (h) { return { stage: h.stage, date: h.date }; });
     var count = x.count == null || x.count === '' ? null : Number(String(x.count).replace(/,/g, ''));
     if (count != null && !(Number.isInteger(count) && count >= 0 && count <= 10000000)) throw new Error('두수는 0 이상의 정수로 입력해 주세요.');
     var lat = x.lat == null || x.lat === '' ? null : Number(x.lat), lng = x.lng == null || x.lng === '' ? null : Number(x.lng);
@@ -1227,7 +1334,7 @@
     function plain(k, max) { return lat == null || geo === 'pick' || typeof x[k] !== 'string' ? '' : x[k].replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max); }
     return {
       id: typeof x.id === 'string' && /^M-[0-9a-z]{6,12}-[0-9a-f]{6}$/.test(x.id) ? x.id : newId(),
-      disease_key: key, disease: disease, date: d, end: end,
+      disease_key: key, disease: disease, date: d, end: end, stage: stage, stage_date: stageDate, history: history,
       addr: text('addr', '주소', 60, true), species: text('species', '축종', 20, true),
       count: count, memo: text('memo', '메모', 200, false),
       lat: lat == null ? null : Math.round(lat * 1e6) / 1e6, lng: lng == null ? null : Math.round(lng * 1e6) / 1e6,
@@ -1242,7 +1349,8 @@
     return state.manual.map(function (m) {
       return { id: m.id, disease: m.disease, farm: '', addr: m.addr, date: m.date, species: m.species, count: m.count,
         agency: '', end: m.end, lat: m.lat, lng: m.lng, geo: m.lat == null ? null : 'manual', source: 'manual', memo: m.memo,
-        mgeo: m.geo, geo_name: m.geo_name };
+        mgeo: m.geo, geo_name: m.geo_name, stage: m.stage || 'confirmed',
+        history: m.history && m.history.length ? m.history.concat([{ stage: m.stage || 'confirmed', date: m.stage_date || m.date, source: '수기 입력' }]) : null };
     });
   }
 
@@ -1646,7 +1754,9 @@
       f.elements.disease_text.value = m.disease_key === 'etc' ? m.disease : '';
       f.elements.end.value = m.end || '';
       f.elements.count.value = m.count == null ? '' : m.count;
+      f.elements.stage.value = m.stage || 'confirmed';
     } else {
+      f.elements.stage.value = 'confirmed';
       f.elements.date.value = isoOf(new Date());
       var h = state.data && state.data.home;
       f.elements.addr.value = h ? h.region + ' ' + h.name + ' ' : '';
@@ -1702,9 +1812,18 @@
   function submitManual() {
     if (state.saving) return;
     var f = form(), body = {};
-    ['disease_key', 'disease_text', 'date', 'end', 'addr', 'species', 'count', 'memo'].forEach(function (k) { body[k] = f.elements[k].value.trim(); });
+    ['disease_key', 'disease_text', 'date', 'end', 'addr', 'species', 'count', 'memo', 'stage'].forEach(function (k) { body[k] = f.elements[k].value.trim(); });
     var old = state.editId ? state.manual.filter(function (x) { return x.id === state.editId; })[0] : null;
     if (old) { body.id = old.id; body.created = old.created; body.updated = new Date().toISOString(); }
+    // 단계를 바꾸면 앞 단계와 그 날짜를 이력으로 남기고, 새 단계의 날짜는 오늘로 둔다
+    var oldStage = old ? old.stage || 'confirmed' : null;
+    if (old && oldStage !== body.stage) {
+      body.history = (old.history || []).concat([{ stage: oldStage, date: old.stage_date || old.date }]);
+      body.stage_date = isoOf(new Date()) < body.date ? body.date : isoOf(new Date());
+    } else if (old) {
+      body.history = old.history || [];
+      body.stage_date = old.history && old.history.length ? old.stage_date : null;
+    }
     if (!old && state.manual.length >= MANUAL_MAX) { $('dlgErr').textContent = '수기 항목이 너무 많습니다. 오래된 항목을 지워 주세요.'; return; }
     var item;
     try { item = checkItem(body, false); } catch (e) { $('dlgErr').textContent = e.message; return; }
@@ -1816,6 +1935,7 @@
       var li = el('li', state.editId === m.id ? 'on' : null);
       var line = el('div', 'ml');
       line.appendChild(el('b', null, m.disease));
+      line.appendChild(stageBadge(m.stage || 'confirmed'));
       line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species));
       var gl = el('span', 'mgeo' + (m.lat == null ? ' none' : m.geo !== 'pick' ? ' rough' : ''),
         m.lat == null ? '위치 미확인' : GEO_TEXT[m.geo] + (m.geo !== 'pick' && m.geo_name ? ' · ' + m.geo_name : ''));

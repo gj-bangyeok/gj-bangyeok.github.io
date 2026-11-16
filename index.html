@@ -40,6 +40,7 @@
     <div class="clock">
       <time id="clock"></time>
       <span id="updated"></span>
+      <span id="stageLine" class="stageline"></span>
       <span id="suppNote" hidden></span>
       <span id="checkOk" hidden></span>
     </div>
@@ -64,6 +65,10 @@
         <span class="muted" id="periodLabel"></span>
       </div>
       <ul id="counts" class="counts"></ul>
+      <div class="stage-row" role="group" aria-labelledby="stageCap">
+        <span class="stage-cap" id="stageCap" title="발생 단계. 누르면 지도와 최근 발생 목록에서 켜고 끕니다. 질병별 건수와 그래프는 확진·종료만 셉니다">단계</span>
+        <ul id="stageCounts" class="stage-chips"></ul>
+      </div>
       <p class="hint">누르면 지도와 막대그래프에서 켜고 끕니다</p>
     </section>
     <section class="panel fac-panel" id="facPanel" hidden>
@@ -136,10 +141,12 @@
         <li><i class="ring r2"></i>3km 보호지역</li>
         <li><i class="ring r3"></i>10km 예찰지역</li>
         <li><i class="ring home"></i>시청 50km 기준선</li>
+        <li><i class="ring pre"></i>확진 전 예정 범위</li>
         <li><i class="manual-key">수기</i>직접 입력</li>
+        <li class="stage-key" id="stageKey"></li>
         <li><i class="press-key">보도</i>보도자료 보완</li>
       </ul>
-      <p class="hint">방역대는 조회 기간과 관계없이 오늘 기준 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다. 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
+      <p class="hint">방역대는 조회 기간과 관계없이 오늘 기준 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다(확진 전 단계는 성긴 점선). 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
       <p class="hint" id="unlocated"></p>
       <p class="hint" id="source"></p>
     </section>
@@ -172,6 +179,13 @@
       </label>
       <label>발생일
         <input type="date" name="date" required>
+      </label>
+      <label>단계
+        <select name="stage">
+          <option value="confirmed">확진</option>
+          <option value="antigen">항원 검출 (정밀검사 중)</option>
+          <option value="suspect">의심 신고 (검사 중)</option>
+        </select>
       </label>
       <label>종료일 <small>선택</small>
         <input type="date" name="end">

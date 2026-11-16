@@ -67,6 +67,18 @@
     </section>
 
     <section class="st-group">
+      <div class="st-head">
+        <h2>발생 단계</h2>
+      </div>
+      <div class="chips" id="stagePresets" role="group" aria-label="단계 묶음">
+        <button type="button" data-s="default" title="확진과 종료(종식일이 지난 확진 건). 현황판 확진 건수와 같은 기준">확진·종료(기본)</button>
+        <button type="button" data-s="all">모두</button>
+      </div>
+      <ul class="stage-list" id="stageList"></ul>
+      <p class="hint">의심·항원·야생은 보도자료 자동 수집과 수기 입력에만 있습니다(공공데이터는 확진만 제공). 최근 건만 들어 있습니다.</p>
+    </section>
+
+    <section class="st-group">
       <h2>축종</h2>
       <label class="st-field"><span class="sr">축종</span><select id="species"></select></label>
     </section>

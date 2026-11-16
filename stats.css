@@ -168,3 +168,6 @@ table.st.cross thead th:first-child { z-index: 2; background: var(--surface-2); 
   .st-summary { grid-template-columns: 1fr 1fr; }
   .sum.wide { grid-column: 1 / -1; }
 }
+/* 발생 단계 거르기 */
+.stage-list { margin-top: 10px; display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 6px 14px; }
+.stage-list .muted { font-size: 13px; }
