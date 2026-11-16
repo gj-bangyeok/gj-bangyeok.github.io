@@ -564,6 +564,79 @@
     });
   }
 
+  // ---------------------------------------------------------------- 확진 전(의심·항원), 야생동물 검출
+  // 보도자료 자동 수집분 중 아직 확진되지 않은 건(data.suspects)과 야생동물 검출(data.wild).
+  // 질병별 건수, 관내·도내·전국 숫자, 상황 판정, 그래프에는 넣지 않고 지도 표지와 위쪽 띠로만 보여 준다.
+  var EXTRA_WILD_DAYS = 30;
+  function extraPopup(it, stage) {
+    var box = el('div');
+    box.appendChild(el('b', null, it.disease));
+    box.appendChild(document.createTextNode(' '));
+    box.appendChild(el('span', 'ptag', stage === 'suspect' ? '확진 전' : '야생'));
+    [
+      (stage === 'suspect' ? '항원 확인 ' : '검출 ') + it.date,
+      it.addr,
+      it.species,
+      stage === 'suspect' ? '확진 전(의심·항원) 단계라 발생 건수와 통계에 넣지 않습니다. 확진되면 발생으로 바뀝니다.'
+        : '야생동물 검출이라 농장 발생 건수에 넣지 않습니다.',
+      it.note
+    ].filter(Boolean).forEach(function (t) { box.appendChild(el('div', null, t)); });
+    var src = el('div', 'psrc', '출처: ');
+    if (it.url) {
+      var a = el('a', null, it.source_name || '보도자료');
+      a.href = it.url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      src.appendChild(a);
+    } else src.appendChild(document.createTextNode(it.source_name || '보도자료'));
+    box.appendChild(src);
+    return box;
+  }
+  function drawExtras(data, cur, home) {
+    var sus = (data.suspects || []).filter(function (it) { return it && it.date; });
+    var wild = (data.wild || []).filter(function (it) { return it && it.date && it.date >= cur.start && it.date <= cur.end; });
+    var watch = token('--watch'), muted = token('--text-2');
+    function mark(it, stage) {
+      if (it.lat == null || it.lng == null) return;
+      L.circleMarker([it.lat, it.lng], stage === 'suspect'
+        ? { radius: 11, color: watch, weight: 3, dashArray: '4 4', fillColor: watch, fillOpacity: 0.15 }
+        : { radius: 6, color: muted, weight: 2, fillColor: muted, fillOpacity: 0.45 })
+        .bindPopup(extraPopup(it, stage)).addTo(state.layer);
+    }
+    sus.forEach(function (it) { mark(it, 'suspect'); });
+    wild.forEach(function (it) { mark(it, 'wild'); });
+    var box = $('extraNote');
+    box.textContent = '';
+    var homeHit = false;
+    function line(it, stage) {
+      var inHome = (it.addr || '').indexOf(home.name) >= 0;
+      if (inHome && stage === 'suspect') homeHit = true;
+      var row = el('div', 'check-row' + (inHome ? ' home' : ''));
+      var t = el('span', null, '');
+      t.appendChild(el('b', null, (inHome ? home.name + ' 관내 ' : '') + (stage === 'suspect' ? '확진 전(의심·항원): ' : '야생동물 검출: ')));
+      t.appendChild(document.createTextNode(it.disease + ' · ' + (it.addr || '') + (it.species ? ' · ' + it.species : '') + ' · ' + md(it.date)));
+      t.appendChild(el('span', 'check-sub', stage === 'suspect' ? ' (확진 건수에 넣지 않음)' : ' (농장 발생 건수에 넣지 않음)'));
+      row.appendChild(t);
+      if (it.lat != null) {
+        var go = el('button', null, '지도에서 보기');
+        go.type = 'button';
+        go.addEventListener('click', function () { state.map.setView([it.lat, it.lng], Math.max(state.map.getZoom(), 11)); });
+        row.appendChild(go);
+      }
+      if (it.url) {
+        var a = el('a', null, '보도자료 보기');
+        a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
+        row.appendChild(a);
+      }
+      return row;
+    }
+    var rows = sus.map(function (it) { return line(it, 'suspect'); }).concat(
+      wild.filter(function (it) { return daysAgo(it.date) <= EXTRA_WILD_DAYS; }).map(function (it) { return line(it, 'wild'); }));
+    rows.sort(function (a, b) { return (b.classList.contains('home') ? 1 : 0) - (a.classList.contains('home') ? 1 : 0); });
+    rows.forEach(function (r) { box.appendChild(r); });
+    box.hidden = !rows.length;
+    box.className = 'notice check-note extra-note' + (homeHit ? ' alert' : sus.length ? ' warn' : '');
+    box.title = '보도자료에서 자동으로 읽은 확진 전 건(최근 21일)과 야생동물 검출(최근 ' + EXTRA_WILD_DAYS + '일). 공식 집계가 아닙니다.';
+  }
+
   // ---------------------------------------------------------------- 막대그래프
   // 단위: auto(구간 길이에 따라 일·주·월), day·week(조회 기간), month(조회 기간 6개월 이상이면 그 기간, 아니면 최근 24개월),
   // year(조회 기간과 관계없이 최근 10년). 지도 자료(약 400일)보다 오래된 구간이 필요할 때만 통계 자료(api/history)를 받는다.
@@ -858,7 +931,8 @@
     if (it.source === 'press') {
       t.appendChild(document.createTextNode(' '));
       var pt = el('span', 'ptag', '보도');
-      pt.title = (it.source_name || '농림축산식품부 보도자료') + '로 보완한 항목입니다(공공데이터에 아직 없음)';
+      pt.title = (it.source_name || '농림축산식품부 보도자료') + '로 보완한 항목입니다(공공데이터에 아직 없음)' +
+        (it.auto ? '. 보도자료에서 자동으로 읽었습니다' : '');
       t.appendChild(pt);
     }
     r.appendChild(t);
@@ -987,6 +1061,7 @@
     var sp = data.supplement, sn = $('suppNote');
     if (sp && sp.count > 0) {
       var sline = '공공데이터에 아직 없는 ' + sp.count + '건은 농식품부 보도자료로 보완';
+      if (sp.auto) sline += '(자동 수집 ' + sp.auto + '건 포함)';
       $('source').textContent += ' · ' + sline + '(목록과 지도에 "보도" 표시)';
       sn.textContent = sline;
       sn.title = Object.keys(sp.by_disease || {}).map(function (k) { return k + ' ' + sp.by_disease[k] + '건'; }).join(', ') +
@@ -1035,6 +1110,7 @@
     // 지도와 막대그래프
     var shown = items.filter(function (it) { return state.shown[it.g.id]; });
     drawMap(shown);
+    drawExtras(data, cur, home);
     drawChart(shown, all);
 
     // 최근 발생 (좌표가 없어도 목록에는 표시)
@@ -1463,6 +1539,16 @@
       row.appendChild(b);
       box.appendChild(row);
     });
+    var fd = c.feeds, feedFail = !!fd && (fd.status === 'fail' ||
+      (fd.last_ok && Date.now() - new Date(fd.last_ok).getTime() > CHECK_STALE_MS));
+    if (feedFail) {
+      var ff = el('div', 'check-row');
+      ff.appendChild(el('b', null, '보도자료 수집 실패: '));
+      ff.appendChild(document.createTextNode('보도자료 자동 수집이 ' + (fd.status === 'fail' ? '실패했습니다(' + stamp(fd.checked) + '). ' : '오래 멈춰 있습니다. ') +
+        (fd.last_ok ? '마지막 성공 ' + stamp(fd.last_ok) + '.' : '아직 성공한 적이 없습니다.')));
+      ff.title = fd.error || '';
+      box.appendChild(ff);
+    }
     if (failed) {
       var fr = el('div', 'check-row');
       fr.appendChild(el('b', null, '대조 실패: '));
@@ -1473,9 +1559,9 @@
       box.appendChild(fr);
     }
     box.hidden = !box.childNodes.length;
-    box.className = 'notice check-note' + (miss.length || failed ? ' warn' : '');
+    box.className = 'notice check-note' + (miss.length || failed || feedFail ? ' warn' : '');
     box.title = detail;
-    if (!miss.length && !failed) {
+    if (!miss.length && !failed && !feedFail) {
       small.textContent = '마지막 대조 ' + stamp(c.last_ok) + ', 발표와 일치';
       small.title = detail;
       small.hidden = false;

@@ -283,6 +283,8 @@ button { font: inherit; color: inherit; }
 }
 .check-row button:hover { background: rgba(0, 0, 0, .06); }
 .check-row .check-sub { opacity: .8; font-weight: 400; }
+.notice.alert { background: var(--alert-bg); color: var(--alert); }
+.extra-note .check-row.home b { font-weight: 800; }
 
 /* ---------- 본문 3단 ---------- */
 .board {
