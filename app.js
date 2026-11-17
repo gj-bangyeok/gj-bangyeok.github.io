@@ -42,7 +42,8 @@
   var WATCH_KM = 50;           // 주의: 도내 또는 50km 안
   var ALERT_KM = 10;           // 비상: 관내 또는 10km 안
   var REFRESH_MS = 5 * 60 * 1000;
-  var STALE_MS = 3 * 60 * 60 * 1000;
+  var STALE_MS = 90 * 60 * 1000; // 30분마다 갱신. 90분(세 번 거름)이 넘으면 지연 띠
+  var IS_PUBLIC = !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   var SVGNS = 'http://www.w3.org/2000/svg';
 
   // 조회 기간. mode: rel(오늘까지 최근 days일), mon(오늘까지 최근 months개월), ytd(올해), fixed(start~end 고정)
@@ -1139,21 +1140,7 @@
     } else { sn.hidden = true; sn.textContent = ''; }
     renderCheck(data.mode === 'live' ? data.check : null);
 
-    // 안내 띠
-    var notice = $('notice'), msg = '', cls = 'notice';
-    var age = data.updated ? Date.now() - new Date(data.updated).getTime() : 0;
-    if (data.error) { msg = data.error; cls += ' err'; }
-    else if (data.mode === 'demo') { msg = data.message || '가상 데이터로 표시 중입니다. 실제 발생 정보가 아닙니다.'; cls += ' warn'; }
-    else if (age > STALE_MS) { msg = '자료가 ' + Math.floor(age / 3600000) + '시간 전에 마지막으로 갱신되었습니다. 서버 상태를 확인해 주세요.'; cls += ' warn'; }
-    else if (state.flash && state.flash.until > Date.now()) { msg = state.flash.msg; }
-    else if (data.message) { msg = data.message; }
-    notice.hidden = !msg;
-    notice.className = cls;
-    notice.textContent = msg;
-    if (data.updated) {
-      var u = data.updated.replace('T', ' ');
-      $('updated').textContent = '자료 갱신 ' + (u.slice(0, 10) === isoOf(new Date()) ? '' : shortDate(u.slice(0, 10)) + ' ') + u.slice(11, 16);
-    }
+    updateNotice();
 
     // 질병별 건수 (켜고 끄기)
     var counts = {};
@@ -1617,7 +1604,7 @@
 
   // ---------- 보도자료 대조 감시 (서버의 data/check.json 요약) ----------
   // 농식품부 보도자료의 누적 발표 건수와 현황판 건수가 다르면 위쪽 띠에 경고, 같으면 갱신 시각 아래에 작게 표시.
-  var CHECK_STALE_MS = 2 * 24 * 3600 * 1000;
+  var CHECK_STALE_MS = 12 * 3600 * 1000; // 보도자료 수집·대조는 2시간마다. 12시간 넘게 멈추면 경고
   function stamp(iso) { return iso ? shortDate(iso.slice(0, 10)) + ' ' + iso.slice(11, 16) : ''; }
   function renderCheck(c) {
     var box = $('checkNote'), small = $('checkOk');
@@ -2176,6 +2163,59 @@
     if (e.key === 'Escape' && pop.el) { e.stopPropagation(); closeIconPop(true); }
   }, true);
 
+  // 서버가 쓰는 시각은 시간대 표시 없는 한국 시각이다. PC 시간대 설정과 무관하게 한국 시각으로 읽는다.
+  function parseKst(s) {
+    if (!s || typeof s !== 'string') return NaN;
+    return new Date(/([zZ]|[+-]\d\d:?\d\d)$/.test(s) ? s : s + '+09:00').getTime();
+  }
+  function agoText(ms) {
+    var m = Math.floor(ms / 60000);
+    return m < 120 ? m + '분' : Math.floor(m / 60) + '시간' + (m % 60 ? ' ' + m % 60 + '분' : '');
+  }
+  function kstLabel(s) {
+    var u = String(s).replace('T', ' ');
+    return (u.slice(0, 10) === isoOf(new Date()) ? '' : shortDate(u.slice(0, 10)) + ' ') + u.slice(11, 16);
+  }
+
+  // 안내 띠. 자료를 새로 받을 때와 10초마다(tick) 다시 따진다. 공개본에서도 자료의 갱신 시각과 지금 시각을 비교한다.
+  function updateNotice() {
+    var data = state.data;
+    if (!data) return;
+    var notice = $('notice'), msg = '', cls = 'notice';
+    var t = parseKst(data.updated), age = isFinite(t) ? Date.now() - t : 0;
+    var h = data.health || {}, stale = data.mode === 'live' && age > STALE_MS;
+    var lastOk = data.updated ? ' 마지막 갱신 ' + kstLabel(data.updated) + '(' + agoText(Math.max(0, age)) + ' 전).' : '';
+    if (state.netErr && !IS_PUBLIC) {
+      msg = '서버에 연결하지 못했습니다. 서버가 꺼졌을 수 있습니다(' + state.netErr + ').' + lastOk; cls += ' err';
+    } else if (h.sync_fail > 0) {
+      msg = '자료 수집이 ' + (h.sync_fail > 1 ? h.sync_fail + '회 연속 ' : '') + '실패했습니다' + (h.sync_error ? '(' + h.sync_error + ')' : '') + '.' + lastOk +
+        ' 다음 주기에 자동으로 다시 시도합니다.'; cls += (stale || h.sync_fail >= 2) ? ' err' : ' warn';
+    } else if (data.error && !h.sync_fail) { msg = data.error; cls += ' err'; }
+    else if (data.mode === 'demo') { msg = data.message || '가상 데이터로 표시 중입니다. 실제 발생 정보가 아닙니다.'; cls += ' warn'; }
+    else if (stale) {
+      msg = '갱신 지연: 마지막 갱신이 ' + kstLabel(data.updated) + '(' + agoText(age) + ' 전)입니다. 30분마다 갱신되어야 하는데 늦어지고 있습니다. ' + (IS_PUBLIC
+        ? '현황판 서버(시청 맥북)가 꺼졌거나 잠자기 중일 수 있습니다. 화면의 내용이 최신이 아닐 수 있습니다.'
+        : '서버 창이 열려 있는지, 맥북이 잠자기 중이 아니었는지 확인해 주세요.');
+      cls += ' err';
+    } else if (!IS_PUBLIC && h.publish_fail >= 2) {
+      msg = '공개본(행정망 PC용) 올리기가 ' + h.publish_fail + '회 연속 실패했습니다' + (h.publish_error ? '(' + h.publish_error + ')' : '') +
+        '. 이 화면은 최신이지만 공개본은 늦어지고 있습니다.'; cls += ' warn';
+    }
+    else if (state.netErr) { msg = '자료를 새로 받지 못했습니다. 잠시 뒤 다시 시도합니다(' + state.netErr + ').' + lastOk; cls += ' warn'; }
+    else if (state.flash && state.flash.until > Date.now()) { msg = state.flash.msg; }
+    else if (data.message) { msg = data.message; }
+    notice.hidden = !msg;
+    if (notice.className !== cls) notice.className = cls;
+    if (notice.textContent !== msg) notice.textContent = msg; // 같은 글을 10초마다 다시 넣으면 화면 낭독기가 되풀이해 읽음
+    if (data.updated) {
+      var up = $('updated');
+      var ut = '자료 갱신 ' + kstLabel(data.updated) + (stale ? ' · 지연' : '');
+      if (up.textContent !== ut) up.textContent = ut;
+      up.classList.toggle('stale', stale);
+      up.title = '농림축산검역본부 발생정보를 마지막으로 받은 시각입니다. 30분마다 갱신됩니다.';
+    }
+  }
+
   function load() {
     return fetch('api/outbreaks', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
@@ -2189,9 +2229,12 @@
         }
         if (!state.map) initMap(data.home);
         state.data = data;
+        state.netErr = null;
         render();
       })
       .catch(function (e) {
+        state.netErr = e.message;
+        if (state.data) { updateNotice(); return; }
         var n = $('notice');
         n.hidden = false; n.className = 'notice err';
         n.textContent = '서버에 연결하지 못했습니다. 잠시 뒤 다시 시도합니다. (' + e.message + ')';
@@ -2205,6 +2248,7 @@
     $('clock').setAttribute('datetime', d.toISOString());
     // 자정이 지나면 '오늘 추종' 구간과 상황 판정을 새 날짜로 다시 계산
     if (state.data && state.dayKey && state.dayKey !== isoOf(d) && !state.picking) render();
+    else if (state.data && !state.picking) updateNotice(); // 자료를 못 받아도 시간이 흐르면 지연 띠가 뜨게
   }
 
   $('rangeQuick').addEventListener('click', function (e) {

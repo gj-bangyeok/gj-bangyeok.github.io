@@ -263,6 +263,7 @@ button { font: inherit; color: inherit; }
 .clock { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
 #clock { font-size: 26px; font-weight: 600; }
 #updated { color: var(--muted); font-size: var(--fs-meta); }
+#updated.stale { color: var(--alert); font-weight: 600; }
 #suppNote { color: var(--muted); font-size: 13px; cursor: help; }
 #suppNote[hidden] { display: none; }
 #stageLine { color: var(--text-2); font-size: 14px; font-weight: 600; cursor: help; text-align: right; }
