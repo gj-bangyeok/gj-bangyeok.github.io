@@ -161,6 +161,7 @@
     </div>
     <p class="dlg-warn">이 PC의 브라우저에만 저장되며 다른 PC 화면에는 보이지 않습니다. 농장주 이름, 연락처 같은 개인정보는 적지 마세요.</p>
     <p class="dlg-note">주소를 적으면 저장할 때 자동으로 지도에 표시합니다. 먼저 현황판에 들어 있는 지명 좌표표에서 찾고, 거기서 읍면동·리를 못 찾을 때만 주소의 행정구역 이름(시도, 시군구, 읍면동, 리. 도로명 주소는 도로 이름)을 OpenStreetMap 주소 검색으로 보냅니다. 번지, 농장명, 메모는 보내지 않습니다.</p>
+    <p class="dlg-note promote-note" id="promoteNote" hidden></p>
     <p class="dlg-warn err" id="storeWarn" hidden>이 브라우저에서는 저장할 수 없습니다(사생활 보호 모드 등). 입력한 내용은 화면을 새로 고치면 사라집니다.</p>
     <div class="fgrid">
       <label>질병
@@ -178,10 +179,10 @@
       <label id="etcWrap" hidden>질병명
         <input name="disease_text" maxlength="30" autocomplete="off">
       </label>
-      <label>발생일
+      <label><span id="dateLbl">발생일</span>
         <input type="date" name="date" required>
       </label>
-      <label>단계
+      <label id="stageWrap">단계
         <select name="stage">
           <option value="confirmed">확진</option>
           <option value="antigen">항원 검출 (정밀검사 중)</option>

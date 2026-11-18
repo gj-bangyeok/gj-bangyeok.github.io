@@ -575,7 +575,8 @@
       st === 'closed' ? '종식(이동제한 해제)된 건이라 방역대를 그리지 않습니다.' : '',
       zoneNote,
       press && it.note ? it.note : '',
-      it.source === 'manual' ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
+      it.source === 'manual' && it.from ? '원래 ' + STAGE_NAME[it.from.stage] + '(' + it.from.date + ') 건을 이 PC에서 확진으로 옮겼습니다. ' + PROMO_LOCAL : '',
+      it.source === 'manual' && !it.from ? '수기 입력, 이 PC에만 저장' + (it.api_match ? ' (공공데이터에 반영됨)' : '') : '',
       it.source === 'manual' && it.mgeo ? GEO_TEXT[it.mgeo] + (it.mgeo !== 'pick' && it.geo_name ? ': ' + it.geo_name : '') : '',
       it.source === 'manual' && approxGeo(it) && !pre ? '주소로 찾은 대략의 위치라 방역대 원(점선)이 실제 범위와 다를 수 있습니다' : '',
       it.memo ? '메모: ' + it.memo : ''
@@ -611,7 +612,32 @@
       if (isCase(it)) src.appendChild(document.createTextNode(' (공공데이터에 아직 없음)'));
       box.appendChild(src);
     }
+    if (canPromote(it) || (it.source === 'manual' && it.from)) {
+      var pa = el('div', 'pact');
+      pa.appendChild(canPromote(it) ? promoteBtn(it, 'ghost sm') : revertBtn(it.id));
+      box.appendChild(pa);
+    }
     return box;
+  }
+
+  // ---------- 확진 전 건을 이 PC에서 확진으로 옮기기 ----------
+  // 항원 검출 보도자료 뒤에 확진 보도자료가 따로 나오지 않는 경우가 많아, 담당자가 확진을 확인하면 직접 옮긴다.
+  // 수기 입력 저장소(이 브라우저)에 원래 건(from)을 가리키는 확진 기록으로 저장한다. 서버로 보내지 않는다.
+  var PROMO_LOCAL = '이 PC에만 저장됩니다. 다른 PC에는 내보내기/가져오기로 옮기세요.';
+  function canPromote(it) { return !!PRE[it.st] && it.source !== 'manual' && typeof it.id === 'string' && !!it.id; }
+  function promoteBtn(it, cls) {
+    var b = el('button', cls, '확진으로 옮기기');
+    b.type = 'button';
+    b.title = '확진을 확인했으면 눌러 확진 목록으로 옮깁니다. 확진일과 상세 주소를 넣을 수 있습니다. ' + PROMO_LOCAL;
+    b.addEventListener('click', function (e) { e.stopPropagation(); if (state.map) state.map.closePopup(); openPromote(it); });
+    return b;
+  }
+  function revertBtn(id) {
+    var b = el('button', 'ghost sm danger', '확진 전으로 되돌리기');
+    b.type = 'button';
+    b.title = '이 PC에서 확진으로 옮긴 기록을 지우고 원래 확진 전 건으로 되돌립니다';
+    b.addEventListener('click', function (e) { e.stopPropagation(); if (state.map) state.map.closePopup(); removeManual(id); });
+    return b;
   }
 
   // 보도자료 보완 항목의 두수 문구: 공개된 값만 씀
@@ -689,6 +715,7 @@
         a.href = it.url; a.target = '_blank'; a.rel = 'noopener';
         row.appendChild(a);
       }
+      if (canPromote(it)) row.appendChild(promoteBtn(it, null));
       return row;
     }
     var rows = list.filter(function (it) { return PRE[it.st] || (it.st === 'wild' && it.ago <= EXTRA_WILD_DAYS); }).map(line);
@@ -991,7 +1018,12 @@
     var t = el('span', 't', label(it));
     t.appendChild(document.createTextNode(' '));
     t.appendChild(stageBadge(it.st || 'confirmed'));
-    if (it.source === 'manual') { t.appendChild(document.createTextNode(' ')); t.appendChild(el('span', 'mtag', '수기')); }
+    if (it.source === 'manual') {
+      t.appendChild(document.createTextNode(' '));
+      var mt = el('span', 'mtag', it.from ? '직접 확진' : '수기');
+      if (it.from) mt.title = '원래 ' + STAGE_NAME[it.from.stage] + '(' + it.from.date + ') 건을 이 PC에서 확진으로 옮겼습니다. ' + PROMO_LOCAL;
+      t.appendChild(mt);
+    }
     if (it.source === 'press') {
       t.appendChild(document.createTextNode(' '));
       var pt = el('span', 'ptag', '보도');
@@ -1014,12 +1046,18 @@
     }
     li.appendChild(r);
     if (it.source === 'manual' && withActions) li.appendChild(manualActions(it));
+    else if (withActions && canPromote(it)) {
+      var pb = el('div', 'mact');
+      pb.appendChild(promoteBtn(it, 'ghost sm'));
+      li.appendChild(pb);
+    }
     return li;
   }
 
   function manualActions(it) {
     var box = el('div', 'mact');
-    if (it.api_match) box.appendChild(el('span', 'tag', '공공데이터에 반영됨'));
+    if (it.dup) box.appendChild(el('span', 'tag', it.dup + '에 확진으로 반영됨(이 기록은 건수에서 뺌)'));
+    else if (it.api_match) box.appendChild(el('span', 'tag', '공공데이터에 반영됨'));
     if (it.lat == null && it.inDialog) {
       var fb = el('button', 'ghost sm', '위치 찾기');
       fb.type = 'button';
@@ -1030,10 +1068,11 @@
     var e = el('button', 'ghost sm', '수정');
     e.type = 'button';
     e.addEventListener('click', function () { openDialog(it.id); });
+    box.appendChild(e);
+    if (it.from) { box.appendChild(revertBtn(it.id)); return box; }
     var d = el('button', 'ghost sm danger', '삭제');
     d.type = 'button';
     d.addEventListener('click', function () { removeManual(it.id); });
-    box.appendChild(e);
     box.appendChild(d);
     return box;
   }
@@ -1095,7 +1134,11 @@
     if (!data) return;
     var home = data.home, todayIso = isoOf(today0());
     // 확진·종료(items, 수기 확진) + 확진 전·야생(suspects, wild, 수기 의심·항원)을 한 목록으로 만든 뒤 단계로 나눈다
-    var every = (data.items || []).concat(manualItems(), data.suspects || [], data.wild || []).filter(function (it) {
+    // 이 PC에서 확진으로 옮긴 확진 전 건은 확진 전 목록에서 뺀다(확진 기록이 대신 들어감)
+    var promoted = {};
+    state.manual.forEach(function (m) { if (m.from) promoted[m.from.id] = true; });
+    var sus = (data.suspects || []).filter(function (it) { return !(it && promoted[it.id]); });
+    var every = (data.items || []).concat(manualItems(), sus, data.wild || []).filter(function (it) {
       return it && it.date;
     }).map(function (it) {
       it.g = groupOf(it.disease);
@@ -1106,6 +1149,8 @@
       return it;
     }).filter(function (it) { return it.ago >= 0; });
     markApiMatch(every);
+    markPromotedDup(every);
+    every = every.filter(function (it) { return !it.dup; });
     every.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
     var all = every.filter(isCase), preAll = every.filter(function (it) { return !isCase(it); });
     var cur = currentRange();
@@ -1326,6 +1371,9 @@
     }
     var d = date('date', '발생일', true), end = date('end', '종료일', false);
     if (end && end < d) throw new Error('종료일이 발생일보다 앞섭니다.');
+    // 확진 전 건(보도자료 자동 수집분)을 이 PC에서 확진으로 옮긴 기록이면 원래 건을 가리킨다. 이 칸이 없는 예전 항목은 그대로
+    var from = cleanFrom(x.from);
+    if (from && !loose && d < from.date) throw new Error('확진일이 ' + STAGE_NAME[from.stage] + ' 확인일(' + from.date + ')보다 앞섭니다.');
     // 단계: 의심 신고·항원 검출·확진. 이 칸이 없는 예전 항목과 예전 내보내기 파일은 확진으로 읽는다
     var stage = x.stage == null || x.stage === '' ? 'confirmed' : x.stage;
     if (!MANUAL_STAGES[stage]) { if (!loose) throw new Error('단계를 목록에서 골라 주세요.'); stage = 'confirmed'; }
@@ -1348,17 +1396,29 @@
       lat: lat == null ? null : Math.round(lat * 1e6) / 1e6, lng: lng == null ? null : Math.round(lng * 1e6) / 1e6,
       geo: geo, geo_name: plain('geo_name', 80), geo_addr: plain('geo_addr', 60),
       created: typeof x.created === 'string' ? x.created.slice(0, 25) : new Date().toISOString(),
-      updated: typeof x.updated === 'string' ? x.updated.slice(0, 25) : null
+      updated: typeof x.updated === 'string' ? x.updated.slice(0, 25) : null,
+      from: from
     };
+  }
+  // 확진으로 옮긴 원래 건: 서버 자료의 id, 그때의 단계(의심·항원)와 날짜, 보도자료 주소, 원래 주소(시군구까지)
+  function cleanFrom(f) {
+    if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+    if (typeof f.id !== 'string' || !/^[0-9A-Za-z._:-]{1,80}$/.test(f.id)) return null;
+    if (!PRE[f.stage] || typeof f.date !== 'string' || !ISO_RE.test(f.date)) return null;
+    var url = typeof f.url === 'string' && /^https:\/\/[^\s"'<>]{1,300}$/.test(f.url) ? f.url : '';
+    var addr = typeof f.addr === 'string' ? f.addr.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) : '';
+    return { id: f.id, stage: f.stage, date: f.date, url: url, addr: addr };
   }
 
   // 화면 자료 형태로 바꾼다 (API 자료와 같은 칸)
   function manualItems() {
     return state.manual.map(function (m) {
+      var hist = m.history && m.history.length ? m.history.concat([{ stage: m.stage || 'confirmed', date: m.stage_date || m.date, source: '수기 입력' }]) : null;
+      if (m.from) hist = [{ stage: m.from.stage, date: m.from.date, url: m.from.url, source: '보도자료' },
+        { stage: 'confirmed', date: m.date, source: '이 PC에서 직접 확진' }];
       return { id: m.id, disease: m.disease, farm: '', addr: m.addr, date: m.date, species: m.species, count: m.count,
         agency: '', end: m.end, lat: m.lat, lng: m.lng, geo: m.lat == null ? null : 'manual', source: 'manual', memo: m.memo,
-        mgeo: m.geo, geo_name: m.geo_name, stage: m.stage || 'confirmed',
-        history: m.history && m.history.length ? m.history.concat([{ stage: m.stage || 'confirmed', date: m.stage_date || m.date, source: '수기 입력' }]) : null };
+        mgeo: m.geo, geo_name: m.geo_name, stage: m.from ? 'confirmed' : m.stage || 'confirmed', from: m.from, history: hist };
     });
   }
 
@@ -1384,6 +1444,25 @@
         var a1 = areaOf(a.addr);
         return !!a0.emd && a0.emd === a1.emd && (!a0.city || !a1.city || a0.city === a1.city);
       });
+    });
+  }
+  // 확진으로 옮긴 건과 같은 건(같은 질병, 같은 시군, 확진일이나 원래 날짜 ±7일)의 확진이 공공데이터나 보도자료로 들어오면
+  // 그쪽을 쓰고 이 PC의 기록은 건수·지도에서 뺀다(서버가 확진 전 건을 확진으로 넘기는 규칙과 같음). 기록은 지우지 않고 목록에 표시
+  function markPromotedDup(all) {
+    state.dupOf = {};
+    var srv = all.filter(function (it) { return it.source !== 'manual' && isCase(it); });
+    all.forEach(function (m) {
+      if (m.source !== 'manual' || !m.from) return;
+      var c0 = areaOf(m.from.addr || m.addr).city;
+      if (!c0) return;
+      var t0 = dateOf(m.date).getTime(), t1 = dateOf(m.from.date).getTime();
+      var hit = srv.filter(function (a) {
+        if (a.g !== m.g || (m.g.id === 'etc' && a.disease.replace(/\s/g, '') !== m.disease.replace(/\s/g, ''))) return false;
+        if (areaOf(a.addr).city !== c0) return false;
+        var t = dateOf(a.date).getTime();
+        return Math.min(Math.abs(t - t0), Math.abs(t - t1)) <= 7 * 86400000;
+      })[0];
+      if (hit) { m.dup = true; state.dupOf[m.id] = hit.source === 'press' ? '보도자료' : '공공데이터'; }
     });
   }
 
@@ -1617,7 +1696,10 @@
       else { from = y + '-01-01'; to = y + '-12-31'; }
       var d = new Date(it.press_date + 'T00:00:00'); d.setDate(d.getDate() + 1);
       var upto = isoOf(d) < to ? isoOf(d) : to;
-      return state.manual.filter(function (m) { return m.disease_key === it.key && m.date >= from && m.date <= upto; }).length;
+      // 확진 기록만 센다(확진 전 수기 항목, 공공데이터·보도자료에 반영돼 뺀 직접 확진 기록은 빼고)
+      return state.manual.filter(function (m) {
+        return m.disease_key === it.key && m.date >= from && m.date <= upto && (m.from || (m.stage || 'confirmed') === 'confirmed') && !(state.dupOf || {})[m.id];
+      }).length;
     }
     var items = c.items.map(function (it0) {  // 서버 값은 그대로 두고 사본에 더한다(다시 그릴 때 겹쳐 더하지 않게)
       var it = {}; Object.keys(it0).forEach(function (k) { it[k] = it0[k]; });
@@ -1754,10 +1836,13 @@
     f.reset();
     state.editId = m ? m.id : null;
     state.pick = m && m.lat != null ? { lat: m.lat, lng: m.lng, geo: m.geo || 'pick', name: m.geo_name, addr: m.geo_addr || m.addr } : null;
-    $('dlgTitle').textContent = m ? '수기 입력 수정' : '발생 수기 입력';
+    state.promote = null;
+    var fr = m && m.from;
+    $('dlgTitle').textContent = fr ? '직접 확진 기록 수정' : m ? '수기 입력 수정' : '발생 수기 입력';
     $('dlgSave').textContent = m ? '고친 내용 저장' : '저장';
     $('dlgNew').hidden = !m;
     $('dlgErr').textContent = '';
+    promoteMode(fr || null);
     if (m) {
       ['disease_key', 'date', 'addr', 'species', 'memo'].forEach(function (k) { f.elements[k].value = m[k] || ''; });
       f.elements.disease_text.value = m.disease_key === 'etc' ? m.disease : '';
@@ -1776,6 +1861,44 @@
     syncPick();
     renderManualList();
     if (!$('manualDlg').open) $('manualDlg').showModal();
+  }
+
+  // 입력 창을 "확진으로 옮기기" 모양으로(fr 이 있을 때) 또는 보통 수기 입력 모양으로 바꾼다
+  function promoteMode(fr) {
+    var f = form();
+    $('promoteNote').hidden = !fr;
+    $('promoteNote').textContent = fr
+      ? '원래 ' + STAGE_NAME[fr.stage] + ' 확인일 ' + fr.date + (fr.addr ? ', ' + fr.addr : '') +
+        '. 확진일과, 알고 있으면 읍면동·리까지의 상세 주소를 넣으세요. 확진 목록·건수·통계에 들어갑니다. ' + PROMO_LOCAL
+      : '';
+    $('stageWrap').hidden = !!fr;
+    $('dateLbl').textContent = fr ? '확진일' : '발생일';
+    f.elements.date.min = fr ? fr.date : '';
+  }
+
+  // 확진 전 건(보도자료 자동 수집분)을 확진으로 옮기는 입력 창. 이미 옮긴 건이면 그 기록의 수정 창을 연다
+  function openPromote(it) {
+    var done = state.manual.filter(function (m) { return m.from && m.from.id === it.id; })[0];
+    if (done) { openDialog(done.id); return; }
+    openDialog(null);
+    var f = form(), key = it.g && DISEASE_OF[it.g.id] ? it.g.id : 'etc', today = isoOf(new Date());
+    state.promote = cleanFrom({ id: it.id, stage: it.st, date: it.date, url: it.url, addr: it.addr });
+    if (!state.promote) { $('dlgErr').textContent = '이 건은 확진으로 옮길 수 없습니다(원래 자료 형식이 맞지 않음).'; return; }
+    $('dlgTitle').textContent = '확진으로 옮기기';
+    $('dlgSave').textContent = '확진으로 저장';
+    promoteMode(state.promote);
+    f.elements.disease_key.value = key;
+    f.elements.disease_text.value = key === 'etc' ? it.disease : '';
+    syncEtc();
+    f.elements.stage.value = 'confirmed';
+    f.elements.date.value = today < it.date ? it.date : today;
+    f.elements.addr.value = it.addr + ' ';
+    f.elements.species.value = it.species || '';
+    // 원래 건의 표시 위치(시군구 중심 등)를 그대로 두고, 상세 주소를 덧붙이면 저장할 때 다시 찾는다
+    state.pick = it.lat != null && it.lng != null
+      ? { lat: it.lat, lng: it.lng, geo: it.geo === 'sgg' ? 'sgg' : 'emd', name: it.addr, addr: it.addr } : null;
+    syncPick();
+    setTimeout(function () { var a = f.elements.addr; a.focus(); a.setSelectionRange(a.value.length, a.value.length); }, 0);
   }
 
   // found: 주소로 찾은 위치(미리 보기). 없으면 지도에서 직접 지정
@@ -1824,6 +1947,9 @@
     ['disease_key', 'disease_text', 'date', 'end', 'addr', 'species', 'count', 'memo', 'stage'].forEach(function (k) { body[k] = f.elements[k].value.trim(); });
     var old = state.editId ? state.manual.filter(function (x) { return x.id === state.editId; })[0] : null;
     if (old) { body.id = old.id; body.created = old.created; body.updated = new Date().toISOString(); }
+    // 확진으로 옮긴 기록: 원래 건을 가리키고 단계는 늘 확진(단계 칸은 숨김)
+    var from = old ? old.from : state.promote;
+    if (from) { body.from = from; body.stage = 'confirmed'; }
     // 단계를 바꾸면 앞 단계와 그 날짜를 이력으로 남기고, 새 단계의 날짜는 오늘로 둔다
     var oldStage = old ? old.stage || 'confirmed' : null;
     if (old && oldStage !== body.stage) {
@@ -1861,7 +1987,8 @@
         $('dlgErr').textContent = '저장했습니다. 다만 주소로 위치를 찾지 못했습니다. 지도를 눌러 위치를 지정해 주세요.';
       } else {
         $('manualDlg').close();
-        flash(item.geo === 'pick' ? '저장했습니다.' : '저장했습니다. ' + GEO_TEXT[item.geo] + '(' + item.geo_name + ')에 표시했습니다.');
+        var head = item.from && !old ? '확진으로 옮겼습니다(' + PROMO_LOCAL + ')' : '저장했습니다.';
+        flash(item.geo === 'pick' ? head : head + ' ' + GEO_TEXT[item.geo] + '(' + item.geo_name + ')에 표시했습니다.');
       }
       render();
     });
@@ -1869,11 +1996,17 @@
 
   function removeManual(id) {
     var m = state.manual.filter(function (x) { return x.id === id; })[0];
-    if (!m || !window.confirm('수기 입력 항목을 지울까요?\n' + m.disease + ', ' + m.addr + ', ' + m.date)) return;
+    if (!m) return;
+    var ask = m.from
+      ? '확진 전으로 되돌릴까요?\n' + m.disease + ', ' + m.addr + ', 확진일 ' + m.date +
+        '\n이 PC에서 확진으로 옮긴 기록을 지우고 원래 ' + STAGE_NAME[m.from.stage] + '(' + m.from.date + ') 건으로 돌아갑니다.' +
+        '\n(원래 건은 보도자료 날짜로부터 21일이 지나면 자동으로 내려갑니다)'
+      : '수기 입력 항목을 지울까요?\n' + m.disease + ', ' + m.addr + ', ' + m.date;
+    if (!window.confirm(ask)) return;
     state.manual = state.manual.filter(function (x) { return x.id !== id; });
     storeSave();
     if (state.editId === id) state.editId = null;
-    flash('수기 입력 항목을 지웠습니다.');
+    flash(m.from ? '확진 전으로 되돌렸습니다.' : '수기 입력 항목을 지웠습니다.');
     render();
     if ($('manualDlg').open) openDialog(null);
   }
@@ -1944,14 +2077,16 @@
       var li = el('li', state.editId === m.id ? 'on' : null);
       var line = el('div', 'ml');
       line.appendChild(el('b', null, m.disease));
-      line.appendChild(stageBadge(m.stage || 'confirmed'));
-      line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species));
+      line.appendChild(stageBadge(m.from ? 'confirmed' : m.stage || 'confirmed'));
+      if (m.from) line.appendChild(el('span', 'mtag', '직접 확진'));
+      line.appendChild(el('span', 'muted', m.date + ' · ' + m.addr + ' · ' + m.species +
+        (m.from ? ' · 원래 ' + STAGE_NAME[m.from.stage] + ' ' + m.from.date : '')));
       var gl = el('span', 'mgeo' + (m.lat == null ? ' none' : m.geo !== 'pick' ? ' rough' : ''),
         m.lat == null ? '위치 미확인' : GEO_TEXT[m.geo] + (m.geo !== 'pick' && m.geo_name ? ' · ' + m.geo_name : ''));
       if (m.lat != null && m.geo !== 'pick') gl.title = '방역대 원이 실제 위치와 다를 수 있습니다. 정확한 위치를 알면 수정에서 지도로 지정하세요.';
       line.appendChild(gl);
       li.appendChild(line);
-      li.appendChild(manualActions({ id: m.id, api_match: match[m.id], lat: m.lat, inDialog: true }));
+      li.appendChild(manualActions({ id: m.id, api_match: match[m.id], lat: m.lat, inDialog: true, from: m.from, dup: (state.dupOf || {})[m.id] }));
       ol.appendChild(li);
     });
     $('manualCount').textContent = state.manual.length + '건';

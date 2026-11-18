@@ -95,9 +95,12 @@
       if (i === undefined) { i = dict[kind].length; dict[kind].push(v); m.set(v, i); }
       return i;
     }
-    var man = withManual ? manualRows(id) : [];
+    var drop = []; // 이 PC에서 확진으로 옮긴 원래 확진 전 행(수기 입력을 포함할 때만 뺀다)
+    var man = withManual ? manualRows(id, drop) : [];
     var press = withPress ? pressRows() : [];
-    var pre = withPress ? preRows() : [];
+    var pre = withPress ? preRows().filter(function (r) {
+      return !drop.some(function (k) { return k.date === r[0] && k.dis === H.dict.disease[r[1]] && k.sgg === H.dict.sgg[r[3]]; });
+    }) : [];
     var n = H.rows.length + press.length + man.length + pre.length;
     var todayInt = intOfIso(isoOf(new Date()));
     var c = { n: n, date: new Int32Array(n), dis: new Uint16Array(n), sido: new Uint16Array(n), sgg: new Uint16Array(n),
@@ -125,7 +128,19 @@
     return c;
   }
 
-  function manualRows(id) {
+  function dayNo(n) { return Date.UTC(Math.floor(n / 10000), Math.floor(n / 100) % 100 - 1, n % 100) / 86400000; }
+  // 확진으로 옮긴 기록(from)과 같은 건(같은 질병, 같은 시군구, 확진일이나 원래 날짜 ±7일)의 확진이 공공데이터나 보도자료에 있는지
+  // (현황판 화면과 같은 규칙. 있으면 그쪽을 쓰고 이 PC의 기록은 세지 않는다)
+  function promotedDup(dis, sgg, days) {
+    function hit(r) {
+      if (H.dict.disease[r[1]] !== dis || H.dict.sgg[r[3]] !== sgg) return false;
+      var d = dayNo(r[0]);
+      return days.some(function (x) { return Math.abs(d - x) <= 7; });
+    }
+    return H.rows.some(hit) || pressRows().some(hit);
+  }
+
+  function manualRows(id, drop) {
     // 시군구 이름 → 시도 (이름이 한 시도에만 있을 때만 씀)
     var sggSido = new Map();
     H.rows.forEach(function (r) {
@@ -140,9 +155,15 @@
       var dis = String(m.disease || '').replace(/\s+/g, ' ').trim();
       dis = DISEASE_ALIAS[dis] || dis;
       var cnt = m.count == null || m.count === '' ? null : Number(m.count);
+      var fr = m.from && typeof m.from === 'object' && typeof m.from.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(m.from.date) ? m.from : null;
+      if (fr) {
+        var fa = areaOf(String(fr.addr || m.addr || ''), sggSido);
+        if (drop) drop.push({ date: intOfIso(fr.date), dis: dis, sgg: fa.sgg });
+        if (fa.sgg && promotedDup(dis, fa.sgg, [dayNo(intOfIso(m.date)), dayNo(intOfIso(fr.date))])) return;
+      }
       out.push([intOfIso(m.date), id('disease', dis), id('sido', a.sido), id('sgg', a.sgg), id('emd', a.emd),
         id('species', String(m.species || '').trim()), isFinite(cnt) ? cnt : null, id('agency', ''),
-        typeof m.end === 'string' ? intOfIso(m.end) : 0, m.stage === 'suspect' || m.stage === 'antigen' ? m.stage : '']);
+        typeof m.end === 'string' ? intOfIso(m.end) : 0, !fr && (m.stage === 'suspect' || m.stage === 'antigen') ? m.stage : '']);
     });
     return out;
   }

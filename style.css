@@ -841,3 +841,8 @@ body.picking #map { cursor: crosshair; }
   #counts { grid-auto-flow: row dense; }
   #counts li.long { grid-column: 1 / -1; }
 }
+
+/* 확진 전 건을 이 PC에서 확진으로 옮기기 */
+.pact { margin-top: 8px; }
+.promote-note { border-left: 3px solid var(--watch); padding-left: 10px; }
+.promote-note[hidden] { display: none; }
