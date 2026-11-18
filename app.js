@@ -1611,6 +1611,12 @@
     if (pa.ri) { parts.push(pa.ri); ranks.push(3); }
     else if (pa.road) { parts.push(pa.road); ranks.push(3); }
     var floor = base ? GEO_RANK[base.geo] : 0, queries = [];
+    // OpenStreetMap 의 리(마을) 지점에는 읍면 정보가 없어 "시도 시군구 읍면 리"로는 못 찾는다. 읍면을 빼고 먼저 묻고,
+    // 같은 이름의 리가 시군 안에 여럿일 수 있으므로 읍면 중심에서 12km 안인 것만 받는다.
+    var emdLL = sido && pa.emd && places.p && places.p[sido] ? places.p[sido][pa.sgg + ' ' + pa.emd] : null;
+    if (pa.ri && pa.emd && floor < 3 && sido !== '세종') {
+      queries.push({ q: [SIDO_FULL[sido], pa.sgg, pa.ri].join(' '), geo: 'ri', near: emdLL });
+    }
     for (var n = parts.length; n > 0 && queries.length < NET_TRIES; n--) {
       var r = ranks[n - 1];
       if (r <= floor || r < 2) break; // 표가 이미 아는 단계나 시군구 이하로는 묻지 않는다
@@ -1621,7 +1627,8 @@
       if (i >= queries.length) return Promise.resolve(null);
       return askNominatim(queries[i].q).then(function (v) {
         if (v === null) return null; // 통신 실패·차단: 더 묻지 않음
-        if (v && (!center || km(center[0], center[1], v[0], v[1]) <= 60)) {
+        var nearOk = !queries[i].near || km(queries[i].near[0], queries[i].near[1], v[0], v[1]) <= 12;
+        if (v && nearOk && (!center || km(center[0], center[1], v[0], v[1]) <= 60)) {
           return { lat: v[0], lng: v[1], geo: queries[i].geo, name: queries[i].q, sido: sido, via: 'osm' };
         }
         return next(i + 1);
@@ -1639,6 +1646,177 @@
       var done = function (g) { if (g) g.addr = addr; return g; };
       if (!useNet || (base && GEO_RANK[base.geo] >= wantRank(pa))) return done(base);
       return netFind(pa, base).then(function (g) { return done(g || base); });
+    });
+  }
+
+  // ---------- 주소 검색: 입력한 주소로 후보 목록을 만든다(입력 창의 「주소 검색」 단추·Enter) ----------
+  // 1) 지명 좌표표에서 부분 일치(앞부분 일치)로 찾는다. 시군구를 빼면 모든 시군에서 찾고 기준 시군을 앞에 둔다.
+  // 2) 표에서 리·도로까지 못 찾았을 때만 Nominatim 에 행정구역 이름(시도, 시군구, 읍면동 또는 리, 도로 이름)만 보내
+  //    최대 5개를 더한다. 번지·농장명·메모는 보내지 않는다. 막혀 있으면 표 결과만 보여 준다.
+  var ADMIN_RE = /(시|군|구|읍|면|동|가|리)$/;
+  var HIT_MAX = 8, NET_HIT_MAX = 5;
+  var GEO_BADGE = { ri: '리', road: '도로', emd: '읍면동', sgg: '시군구' };
+  var NOMI_LIST_URL = 'https://nominatim.openstreetmap.org/search?format=json&countrycodes=kr&limit=5&addressdetails=1&accept-language=ko&q=';
+  var search = { seq: 0, hits: [], sp: null };
+
+  // 주소 → {시도, 행정구역 낱말(앞에서부터 이어지는 것), 도로 이름, 나머지(번지 등)}
+  function splitAddr(addr) {
+    var t = String(addr || '').replace(/[,()\[\]]/g, ' ').split(/\s+/).filter(Boolean), i = 0;
+    var sp = { sido: null, admin: [], road: null, rest: [] };
+    if (t.length && sidoShort(t[0], t[1])) { sp.sido = sidoShort(t[0], t[1]); i = 1; }
+    if (sp.sido === '세종' && (t[i] === '세종시' || t[i] === '세종특별자치시')) { sp.admin.push('세종시'); i++; }
+    for (; i < t.length; i++) {
+      var w = t[i];
+      if (/\d/.test(w) || w.length < 2 || !ADMIN_RE.test(w)) break;
+      if (/구$/.test(w) && sp.admin.length && /시$/.test(sp.admin[sp.admin.length - 1])) continue; // 일반구(포항시 남구)는 시로 합친다
+      sp.admin.push(w);
+    }
+    if (t[i] && /(로|길)$/.test(t[i]) && !/^\d/.test(t[i])) { sp.road = t[i]; i++; }
+    sp.rest = t.slice(i);
+    return sp;
+  }
+  function isSgg(w) { return /(시|군|구)$/.test(w); }
+
+  // 지명 좌표표에서 낱말이 차례대로(같거나 앞부분이 같게) 들어 있고, 마지막 낱말이 그 지명의 끝인 것
+  function tableMatch(sido, toks) {
+    var P = places.p || {}, out = [];
+    if (!toks.length) return out;
+    Object.keys(P).forEach(function (s) {
+      if (sido && s !== sido) return;
+      Object.keys(P[s]).forEach(function (k) {
+        var c = k.split(' '), j = 0, exact = 0;
+        for (var i = 0; i < toks.length; i++) {
+          var w = toks[i];
+          while (j < c.length && c[j] !== w && !(w.length >= 2 && c[j].indexOf(w) === 0)) j++;
+          if (j >= c.length) return;
+          if (c[j] === w) exact++;
+          j++;
+        }
+        if (j !== c.length) return;
+        out.push({ s: s, k: k, c: c, exact: exact });
+      });
+    });
+    return out;
+  }
+
+  function tableSearch(sp) {
+    var home = state.data && state.data.home;
+    var homeSido = home ? sidoShort((home.region || '').split(' ')[0]) : null, homeSgg = home ? home.name : null;
+    var toks = sp.admin.slice(), dropped = [], found = tableMatch(sp.sido, toks);
+    // 못 찾으면 끝 낱말을 하나씩 빼 본다. 다만 시군구만 남기지는 않는다(엉터리 읍면동·리가 시군 중심으로 잡히지 않게)
+    while (!found.length && toks.length > 1) {
+      dropped.unshift(toks.pop());
+      if (toks.every(isSgg)) break;
+      found = tableMatch(sp.sido, toks);
+    }
+    if (!found.length) dropped = [];
+    found.sort(function (a, b) {
+      var ha = a.s === homeSido && a.c[0] === homeSgg ? 1 : 0, hb = b.s === homeSido && b.c[0] === homeSgg ? 1 : 0;
+      return hb - ha || b.exact - a.exact || b.c.length - a.c.length || (a.k < b.k ? -1 : a.k > b.k ? 1 : 0);
+    });
+    var hits = found.slice(0, HIT_MAX).map(function (f) {
+      var ll = places.p[f.s][f.k];
+      return { lat: ll[0], lng: ll[1], geo: f.c.length >= 3 ? 'ri' : f.c.length === 2 ? 'emd' : 'sgg',
+        name: (f.s === '세종' ? '세종특별자치시' + (f.c.length > 1 ? ' ' + f.c.slice(1).join(' ') : '') : SIDO_FULL[f.s] + ' ' + f.k),
+        sido: f.s, via: 'table', full: f.exact === toks.length };
+    });
+    return { hits: hits, dropped: dropped, more: found.length > HIT_MAX };
+  }
+
+  // Nominatim 후보 목록 한 번 묻기. 결과 [{lat, lng, geo, name}], [](없음), null(통신 실패·차단)
+  function askNominatimList(q) {
+    var ck = 'L|' + q, cached = geoCache().q[ck];
+    if (Array.isArray(cached)) return Promise.resolve(cached);
+    if (Date.now() < net.downUntil) return Promise.resolve(null);
+    var wait = Math.max(0, net.last + NET_GAP_MS - Date.now());
+    return new Promise(function (res) { setTimeout(res, wait); }).then(function () {
+      net.last = Date.now();
+      var ctl = window.AbortController ? new AbortController() : null;
+      var to = ctl ? setTimeout(function () { ctl.abort(); }, NET_TIMEOUT_MS) : null;
+      return fetch(NOMI_LIST_URL + encodeURIComponent(q), ctl ? { signal: ctl.signal, credentials: 'omit' } : { credentials: 'omit' })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (res) {
+          clearTimeout(to);
+          net.last = Date.now();
+          var out = [];
+          (Array.isArray(res) ? res : []).forEach(function (h) {
+            var lat = Number(h.lat), lng = Number(h.lon), typ = h.addresstype || h.type || '';
+            if (!(lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 132)) return;
+            var geo = h.class === 'highway' || typ === 'road' ? 'road'
+              : /^(village|hamlet|isolated_dwelling|farm|allotments)$/.test(typ) ? 'ri'
+              : /^(quarter|suburb|neighbourhood|town|borough|city_district)$/.test(typ) ? 'emd'
+              : /^(city|county|municipality)$/.test(typ) ? 'sgg' : null;
+            if (!geo || ['place', 'boundary', 'highway'].indexOf(h.class) < 0) return;
+            // 이름은 주소 항목에서 시도, 시군구, 그 지명만 골라 만든다(전체 표시 이름에는 지나는 동네가 줄줄이 붙기도 함)
+            var ad = h.address || {};
+            var own = geo === 'road' ? ad.road : geo === 'ri' ? ad.village || ad.hamlet || ad.isolated_dwelling
+              : geo === 'emd' ? ad.town || ad.suburb || ad.quarter || ad.borough || ad.city_district || ad.neighbourhood : '';
+            var name = [ad.province || ad.state, ad.city || ad.county || ad.municipality, own || h.name]
+              .filter(function (x, k, arr) { return x && arr.indexOf(x) === k; }).join(' ');
+            out.push({ lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, geo: geo, name: name.slice(0, 60) });
+          });
+          geoCachePut(ck, out);
+          return out;
+        })
+        .catch(function () { clearTimeout(to); net.last = Date.now(); net.downUntil = Date.now() + NET_PAUSE_MS; return null; });
+    });
+  }
+
+  // 표에서 리·도로까지 못 찾았을 때 Nominatim 에 물을 말(행정구역 이름만, 최대 2개)
+  function netQueries(sp, tab) {
+    var home = state.data && state.data.home, top = tab.hits[0];
+    var homeSido = home ? sidoShort((home.region || '').split(' ')[0]) : null;
+    var userSgg = sp.admin.filter(isSgg)[0];
+    var sgg = userSgg || (top && top.name.split(' ')[1]) || (home ? home.name : null);
+    var sido = sp.sido || (top && top.sido);
+    if (!sido && userSgg) { // 시도를 안 적었으면 그 시군구가 있는 시도(여럿이면 기준 시도, 아니면 시도 없이 묻는다)
+      var ss = Object.keys(places.p || {}).filter(function (s) { return places.p[s][userSgg]; });
+      sido = ss.length === 1 ? ss[0] : ss.indexOf(homeSido) >= 0 ? homeSido : null;
+    } else if (!sido) sido = homeSido;
+    if (!sgg) return [];
+    var head = sido === '세종' ? ['세종특별자치시'] : sido ? [SIDO_FULL[sido], sgg] : [sgg];
+    var below = sp.admin.filter(function (w) { return !isSgg(w); });
+    var ri = below.filter(function (w) { return /리$/.test(w); })[0], emd = below.filter(function (w) { return /(읍|면|동|가)$/.test(w); })[0];
+    var qs = [];
+    if (sp.road) qs.push(head.concat([sp.road]).join(' '));
+    if (ri) qs.push(head.concat([ri]).join(' ')); // 리 지점에는 읍면 정보가 없어 읍면을 빼고 묻는다
+    if (emd && qs.length < 2) qs.push(head.concat([emd]).join(' '));
+    return qs.slice(0, 2);
+  }
+
+  // 표와 주소 검색 결과를 합친다. 결과 {hits, dropped, more, net: 'ok' | 'down' | 'skip'}
+  function searchAddr(addr) {
+    return loadPlaces().then(function () {
+      var sp = splitAddr(addr), tab = tableSearch(sp);
+      var deep = sp.admin.filter(function (w) { return !isSgg(w); }).length;
+      var top = tab.hits[0], tableEnough = top && top.full && !tab.dropped.length && !sp.road;
+      var qs = (tableEnough || (!deep && !sp.road)) ? [] : netQueries(sp, tab);
+      var res = { sp: sp, hits: tab.hits, dropped: tab.dropped, more: tab.more, net: qs.length ? 'ok' : 'skip' };
+      if (!qs.length) return res;
+      var center = null;
+      if (top && places.p[top.sido]) center = places.p[top.sido][top.name.split(' ')[1]] || null;
+      var extra = [];
+      return qs.reduce(function (pr, q) {
+        return pr.then(function () {
+          if (res.net === 'down' || extra.length >= NET_HIT_MAX) return;
+          return askNominatimList(q).then(function (list) {
+            if (list === null) { res.net = 'down'; return; }
+            list.forEach(function (h) {
+              if (extra.length >= NET_HIT_MAX) return;
+              if (center && km(center[0], center[1], h.lat, h.lng) > 60) return;
+              var dup = res.hits.concat(extra).some(function (x) { return km(x.lat, x.lng, h.lat, h.lng) < 0.3; });
+              if (!dup) extra.push({ lat: h.lat, lng: h.lng, geo: h.geo, name: h.name, via: 'osm', full: true });
+            });
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        // 주소 검색이 더 자세한 단계(리·도로)를 찾았으면 그것을 표의 덜 자세한 결과보다 앞에 둔다
+        var best = res.hits.length ? GEO_RANK[res.hits[0].geo] - (res.dropped.length ? 1 : 0) : 0;
+        var front = extra.filter(function (h) { return GEO_RANK[h.geo] > best; });
+        var back = extra.filter(function (h) { return GEO_RANK[h.geo] <= best; });
+        res.hits = front.concat(res.hits, back);
+        return res;
+      });
     });
   }
 
@@ -1788,7 +1966,10 @@
     $('pickBtn').addEventListener('click', function () { startPick(null); });
     $('findBtn').addEventListener('click', findByAddr);
     form().elements.addr.addEventListener('input', syncPick);
-    $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); });
+    form().elements.addr.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); findByAddr(); }
+    });
+    $('pickClear').addEventListener('click', function () { state.pick = null; syncPick(); renderHits(); });
     $('pickOk').addEventListener('click', function () {
       if (state.pickMarker) {
         var ll = state.pickMarker.getLatLng(), p = state.pick;
@@ -1814,21 +1995,93 @@
     $('pickText').textContent = !p
       ? '위치를 지정하지 않으면 저장할 때 주소로 위치를 찾아 지도에 표시합니다.'
       : stale ? '주소를 고쳤으므로 저장할 때 위치를 다시 찾습니다.'
-      : GEO_TEXT[geo] + (geo !== 'pick' && p.name ? ' (' + p.name + ')' : '') + ': ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5);
+      : '정한 위치: ' + GEO_TEXT[geo] + (geo !== 'pick' && p.name ? ' (' + p.name + ')' : '') + ', ' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5);
     $('pickClear').hidden = !p;
+    showPreview();
   }
 
-  // "주소로 위치 찾기": 찾은 위치를 지도에 미리 보여 주고, 맞으면 정하고 다르면 지도를 눌러 고치게 한다
+  // 「주소 검색」: 후보 목록을 입력 창 안에 보여 준다. 지도 선택으로 넘어가지 않는다(지도는 「정확한 지점을 직접 찍기」로만)
+  function setAddrStatus(text, warn) {
+    var st = $('addrStatus');
+    st.textContent = text || '';
+    st.className = 'addr-status' + (warn ? ' warn' : '');
+  }
+  function clearHits() {
+    search.seq++; search.hits = []; search.sp = null;
+    $('addrHits').hidden = true; $('addrHits').textContent = '';
+    setAddrStatus('');
+    var b = $('findBtn'); b.disabled = false; b.textContent = '주소 검색';
+  }
   function findByAddr() {
-    var addr = addrNow(), btn = $('findBtn');
-    if (!addr) { $('dlgErr').textContent = '주소를 먼저 적어 주세요.'; return; }
-    btn.disabled = true; btn.textContent = '찾는 중…';
+    var addr = addrNow(), btn = $('findBtn'), my = ++search.seq;
     $('dlgErr').textContent = '';
-    geocodeAddr(addr, true).then(function (g) {
-      btn.disabled = false; btn.textContent = '주소로 위치 찾기';
-      if (!g) { $('dlgErr').textContent = '주소로 위치를 찾지 못했습니다. 지도를 눌러 위치를 지정해 주세요.'; return; }
-      startPick(g);
+    if (!addr) { setAddrStatus('주소를 먼저 적어 주세요.', true); return; }
+    btn.disabled = true; btn.textContent = '찾는 중…';
+    setAddrStatus('찾는 중입니다…');
+    searchAddr(addr).then(function (r) {
+      if (my !== search.seq) return;
+      btn.disabled = false; btn.textContent = '주소 검색';
+      search.hits = r.hits; search.sp = r.sp;
+      renderHits();
+      var down = r.net === 'down' ? ' OpenStreetMap 주소 검색에 연결되지 않아 지명 좌표표에서만 찾았습니다.' : '';
+      if (!r.hits.length) {
+        setAddrStatus('찾지 못했습니다. 읍면동이나 리 이름으로 다시 검색하거나 지도에서 직접 찍어 주세요.' + down, true);
+        return;
+      }
+      var msg = '후보 ' + r.hits.length + '곳' + (r.more ? '(더 있음. 이름을 더 적으면 좁혀집니다)' : '') + '. 맞는 곳을 누르세요.';
+      if (r.dropped.length) msg = '"' + r.dropped.join(' ') + '"까지는 찾지 못해 위 단계의 지명을 보여 줍니다. ' + msg;
+      else if (r.hits.every(function (h) { return h.geo === 'sgg'; })) msg += ' 시군구 중심입니다. 읍면동이나 리까지 적으면 더 정확합니다.';
+      setAddrStatus(msg + down, !!(r.dropped.length || down));
     });
+  }
+  function renderHits() {
+    var ul = $('addrHits'), p = state.pick;
+    ul.textContent = '';
+    ul.hidden = !search.hits.length;
+    search.hits.forEach(function (h, i) {
+      var li = el('li'), b = el('button');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', p && p.geo === h.geo && p.lat === h.lat && p.lng === h.lng ? 'true' : 'false');
+      b.appendChild(el('span', 'hn', h.name));
+      b.appendChild(el('span', 'hg' + (h.geo === 'ri' || h.geo === 'road' ? '' : ' rough'), GEO_BADGE[h.geo]));
+      b.appendChild(el('span', 'hs', h.via === 'osm' ? 'OSM 검색' : '지명표'));
+      b.title = GEO_TEXT[h.geo] + (h.via === 'osm' ? ', OpenStreetMap 주소 검색 결과' : ', 현황판 지명 좌표표');
+      b.addEventListener('click', function () { chooseHit(i); });
+      li.appendChild(b);
+      ul.appendChild(li);
+    });
+  }
+  // 후보를 고르면 위치를 정하고 주소 칸을 그 이름으로 채운다(번지 등 적어 둔 나머지는 뒤에 그대로 둔다)
+  function chooseHit(i) {
+    var h = search.hits[i], sp = search.sp;
+    if (!h || !sp) return;
+    var tail = (h.geo !== 'road' && sp.road ? [sp.road] : []).concat(sp.rest);
+    var addr = (h.name + (tail.length ? ' ' + tail.join(' ') : '')).replace(/\s+/g, ' ').trim().slice(0, 60);
+    form().elements.addr.value = addr;
+    state.pick = { lat: h.lat, lng: h.lng, geo: h.geo, name: h.name, addr: addrNow() };
+    syncPick();
+    renderHits();
+    setAddrStatus(GEO_TEXT[h.geo] + '로 정했습니다. 더 정확한 지점을 알면 「정확한 지점을 직접 찍기」를 누르세요.');
+  }
+
+  // 입력 창 안의 작은 지도: 정한 위치를 보여 준다(누르거나 옮길 수는 없음)
+  var mini = { map: null, marker: null };
+  function showPreview() {
+    var p = state.pick, box = $('addrMap');
+    var stale = p && (p.geo || 'pick') !== 'pick' && p.addr !== addrNow();
+    if (!p || stale || !window.L) { box.hidden = true; return; }
+    box.hidden = false;
+    if (!$('manualDlg').open) { setTimeout(showPreview, 0); return; } // 창이 열린 뒤에 크기를 잰다
+    if (!mini.map) {
+      mini.map = L.map(box, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, keyboard: false });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '&copy; OpenStreetMap 기여자' }).addTo(mini.map);
+    }
+    mini.map.invalidateSize();
+    mini.map.setView([p.lat, p.lng], { pick: 15, road: 15, ri: 14, emd: 13, sgg: 11 }[p.geo || 'pick'] || 13);
+    if (!mini.marker) {
+      mini.marker = L.marker([p.lat, p.lng], { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: '', html: el('div', 'pick-pin'), iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(mini.map);
+    } else mini.marker.setLatLng([p.lat, p.lng]);
   }
 
   function openDialog(id) {
@@ -1842,6 +2095,7 @@
     $('dlgSave').textContent = m ? '고친 내용 저장' : '저장';
     $('dlgNew').hidden = !m;
     $('dlgErr').textContent = '';
+    clearHits();
     promoteMode(fr || null);
     if (m) {
       ['disease_key', 'date', 'addr', 'species', 'memo'].forEach(function (k) { f.elements[k].value = m[k] || ''; });
@@ -1937,6 +2191,7 @@
     $('pickBar').hidden = true;
     document.body.classList.remove('picking');
     syncPick();
+    renderHits();
     $('manualDlg').showModal();
   }
 

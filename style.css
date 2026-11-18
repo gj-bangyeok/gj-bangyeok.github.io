@@ -625,6 +625,24 @@ body.picking #map { cursor: crosshair; }
   color-scheme: var(--scheme);
 }
 .fgrid textarea { resize: vertical; }
+.addr-wrap { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); font-size: var(--fs-meta); }
+.addr-wrap > label small { color: var(--muted); font-size: 13px; }
+.addr-row { display: flex; gap: 8px; }
+.addr-row input { flex: 1 1 auto; min-width: 0; }
+.addr-row button { flex: none; min-height: 40px; }
+.addr-status { margin: 0; min-height: 20px; color: var(--text-2); font-size: 14px; }
+.addr-status.warn { color: var(--watch); }
+.addr-hits { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); max-height: 216px; overflow-y: auto; }
+.addr-hits[hidden], .addr-map[hidden] { display: none; }
+.addr-hits li + li { border-top: 1px solid var(--line); }
+.addr-hits button { display: flex; width: 100%; align-items: baseline; gap: 8px; padding: 8px 12px; border: 0; border-radius: 0; background: transparent; color: var(--text); font: inherit; font-size: var(--fs-body); text-align: left; cursor: pointer; }
+.addr-hits button:hover, .addr-hits button:focus-visible { background: var(--surface-2); }
+.addr-hits button[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--manual); }
+.addr-hits .hn { flex: 1 1 auto; min-width: 0; }
+.addr-hits .hg { flex: none; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--text-2); font-size: 13px; }
+.addr-hits .hg.rough { color: var(--watch); border-color: currentColor; }
+.addr-hits .hs { flex: none; color: var(--muted); font-size: 13px; }
+.addr-map { height: 200px; margin-top: 4px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); }
 .pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; color: var(--text-2); font-size: var(--fs-meta); }
 .pick span { flex: 1 1 260px; }
 .dlg-err { min-height: 24px; margin-top: 12px; color: var(--alert); font-size: var(--fs-meta); }

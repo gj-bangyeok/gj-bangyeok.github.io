@@ -160,7 +160,7 @@
       <button type="button" class="ghost" data-close>닫기</button>
     </div>
     <p class="dlg-warn">이 PC의 브라우저에만 저장되며 다른 PC 화면에는 보이지 않습니다. 농장주 이름, 연락처 같은 개인정보는 적지 마세요.</p>
-    <p class="dlg-note">주소를 적으면 저장할 때 자동으로 지도에 표시합니다. 먼저 현황판에 들어 있는 지명 좌표표에서 찾고, 거기서 읍면동·리를 못 찾을 때만 주소의 행정구역 이름(시도, 시군구, 읍면동, 리. 도로명 주소는 도로 이름)을 OpenStreetMap 주소 검색으로 보냅니다. 번지, 농장명, 메모는 보내지 않습니다.</p>
+    <p class="dlg-note">주소 검색은 먼저 현황판에 들어 있는 지명 좌표표에서 찾고, 거기서 리·도로까지 못 찾을 때만 주소의 행정구역 이름(시도, 시군구, 읍면동, 리. 도로명 주소는 도로 이름)을 OpenStreetMap 주소 검색으로 보냅니다. 번지, 농장명, 메모는 보내지 않습니다. 후보를 고르지 않고 저장하면 주소로 자동으로 찾아 표시합니다.</p>
     <p class="dlg-note promote-note" id="promoteNote" hidden></p>
     <p class="dlg-warn err" id="storeWarn" hidden>이 브라우저에서는 저장할 수 없습니다(사생활 보호 모드 등). 입력한 내용은 화면을 새로 고치면 사라집니다.</p>
     <div class="fgrid">
@@ -192,9 +192,16 @@
       <label>종료일 <small>선택</small>
         <input type="date" name="end">
       </label>
-      <label class="wide">주소 <small>읍면동이나 리까지 적으면 그 위치에 표시됩니다. 번지는 적지 않아도 됩니다</small>
-        <input name="addr" maxlength="60" autocomplete="off" placeholder="예: 경상북도 경주시 안강읍 산대리">
-      </label>
+      <div class="wide addr-wrap">
+        <label for="addrInput">주소 <small>읍면동이나 리까지 적고 「주소 검색」(또는 Enter)으로 후보를 고르세요. 번지는 적지 않아도 됩니다</small></label>
+        <div class="addr-row">
+          <input id="addrInput" name="addr" maxlength="60" autocomplete="off" placeholder="예: 경상북도 경주시 안강읍 산대리" aria-describedby="addrStatus">
+          <button type="button" class="primary" id="findBtn">주소 검색</button>
+        </div>
+        <p class="addr-status" id="addrStatus" role="status" aria-live="polite"></p>
+        <ul class="addr-hits" id="addrHits" hidden></ul>
+        <div class="addr-map" id="addrMap" hidden></div>
+      </div>
       <label>축종
         <input name="species" maxlength="20" list="speciesList" autocomplete="off" placeholder="예: 소-한우">
       </label>
@@ -207,8 +214,7 @@
     </div>
     <div class="pick">
       <span id="pickText"></span>
-      <button type="button" class="ghost" id="findBtn">주소로 위치 찾기</button>
-      <button type="button" class="ghost" id="pickBtn">지도에서 위치 지정</button>
+      <button type="button" class="ghost" id="pickBtn">정확한 지점을 직접 찍기</button>
       <button type="button" class="ghost" id="pickClear" hidden>위치 지우기</button>
     </div>
     <p class="dlg-err" id="dlgErr" role="alert"></p>
