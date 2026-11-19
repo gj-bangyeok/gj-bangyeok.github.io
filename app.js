@@ -470,9 +470,14 @@
       var lw = lp && lp.parentNode === $('centerCol') && !lp.classList.contains('folded') ? lp.offsetWidth + 24 : 0;
       var right = Math.max(HOME_LABEL_PAD, lw);
       // 0.25 단계까지 맞춰 꽉 채우고, 그 뒤 확대·축소는 예전처럼 정수 단계로 움직인다
-      map.options.zoomSnap = 0.25;
+      // 지도가 화면 맨 위부터 맨 아래까지라서 위아래 여백은 작게 두고, 0.1 단계까지 맞춘다
+      map.options.zoomSnap = 0.1;
       var zFull = map.getBoundsZoom(b, false, L.point(12 + HOME_LABEL_PAD, 24)), zSide = map.getBoundsZoom(b, false, L.point(12 + right, 24));
-      if (zSide < zFull - 0.25) right = HOME_LABEL_PAD;
+      // 오른쪽을 비우면 지도가 너무 작아지는 화면(폭이 좁고 높은 화면)에서는 비우지 않고,
+      // 상자를 오른쪽 아래(대한해협·대마도 쪽 바다)로 내려 강원 해안을 가리지 않게 한다
+      var low = lw > 0 && zSide < zFull - 0.25;
+      if (low) right = HOME_LABEL_PAD;
+      if (lp) lp.classList.toggle('legend-low', low);
       map.fitBounds(b, { paddingTopLeft: [12, 12], paddingBottomRight: [right, 12], animate: false });
       map.options.zoomSnap = 1;
     } else {

@@ -41,11 +41,15 @@
       </div>
     </div>
     <div class="clock">
+      <span class="clock-main">
       <time id="clock"></time>
       <span id="updated"></span>
+      </span>
+      <span class="clock-meta">
       <span id="stageLine" class="stageline"></span>
       <span id="suppNote" hidden></span>
       <span id="checkOk" hidden></span>
+      </span>
     </div>
   </div>
 </header>
@@ -93,6 +97,7 @@
 
   <div class="center" id="centerCol">
     <div id="map" role="region" aria-label="발생 지도"></div>
+    <div class="map-title" aria-hidden="true"><span class="homeName">경주시</span> 가축방역 상황판</div>
     <div class="past-tag" id="pastTag" hidden></div>
     <section class="chart-panel" id="chartPanel">
       <div class="panel-head">
