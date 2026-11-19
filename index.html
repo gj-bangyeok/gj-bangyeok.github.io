@@ -20,8 +20,11 @@
     </div>
   </div>
   <div class="controls">
-    <a class="manual-btn nav-link" href="stats.html" title="기간·지역·질병별 통계와 엑셀 내려받기">통계</a>
-    <button type="button" id="manualBtn" class="manual-btn" title="공공데이터에 아직 없는 발생을 이 PC에 직접 입력">발생 입력</button>
+    <div class="hbtns">
+      <button type="button" id="layoutBtn" class="manual-btn layout-btn" aria-pressed="true">배치</button>
+      <a class="manual-btn nav-link" href="stats.html" title="기간·지역·질병별 통계와 엑셀 내려받기">통계</a>
+      <button type="button" id="manualBtn" class="manual-btn" title="공공데이터에 아직 없는 발생을 이 PC에 직접 입력">발생 입력</button>
+    </div>
     <div class="range" id="range" role="group" aria-label="조회 기간">
       <div class="range-dates">
         <input type="date" id="rangeStart" aria-label="조회 시작일">
@@ -58,7 +61,7 @@
 </div>
 
 <main class="board">
-  <aside class="col">
+  <aside class="col" id="colL">
     <section class="panel">
       <div class="panel-head">
         <h2>질병별 발생</h2>
@@ -79,7 +82,7 @@
       <ul id="facCounts" class="counts"></ul>
       <p class="hint">누르면 지도에서 켜고 끕니다. ‘위치’는 그곳으로 이동</p>
     </section>
-    <section class="panel grow">
+    <section class="panel grow" id="recentPanel">
       <div class="panel-head">
         <h2>최근 발생</h2>
         <span class="muted" id="recentCount"></span>
@@ -88,7 +91,7 @@
     </section>
   </aside>
 
-  <div class="center">
+  <div class="center" id="centerCol">
     <div id="map" role="region" aria-label="발생 지도"></div>
     <div class="past-tag" id="pastTag" hidden></div>
     <section class="chart-panel" id="chartPanel">
@@ -110,8 +113,8 @@
     </section>
   </div>
 
-  <aside class="col">
-    <section class="panel">
+  <aside class="col" id="colR">
+    <section class="panel stat-panel" id="statPanel">
       <div class="panel-head">
         <h2><span class="homeName">경주시</span> 기준 발생</h2>
         <span class="muted" id="statLabel"></span>
@@ -122,7 +125,7 @@
         <div class="stat"><b id="statAll">0</b><span>전국</span></div>
       </div>
     </section>
-    <section class="panel">
+    <section class="panel" id="nearPanel">
       <div class="panel-head">
         <h2>가까운 주요 질병</h2>
         <span class="muted">시청에서 직선거리</span>
@@ -135,8 +138,9 @@
       </div>
       <p class="res" id="resLine"></p>
     </section>
-    <section class="panel grow">
-      <h2>지도 보는 법</h2>
+    <section class="panel grow legend-panel" id="legendPanel">
+      <h2><button type="button" class="fold-btn" id="legendFold" aria-expanded="true" aria-controls="legendBody">지도 보는 법</button></h2>
+      <div class="legend-body" id="legendBody">
       <ul class="legend">
         <li><i class="ring r1"></i>500m 관리지역</li>
         <li><i class="ring r2"></i>3km 보호지역</li>
@@ -147,9 +151,13 @@
         <li class="stage-key" id="stageKey"></li>
         <li><i class="press-key">보도</i>보도자료 보완</li>
       </ul>
+      <button type="button" class="legend-more" id="legendMore" aria-expanded="false" aria-controls="legendNotes">설명 보기</button>
+      <div class="legend-notes" id="legendNotes">
       <p class="hint">방역대는 조회 기간과 관계없이 오늘 기준 최근 30일 안에 발생한 미종식 주요 질병에만 그립니다(확진 전 단계는 성긴 점선). 읍면동까지만 확인된 곳은 위치가 대략적입니다.</p>
       <p class="hint" id="unlocated"></p>
       <p class="hint" id="source"></p>
+      </div>
+      </div>
     </section>
   </aside>
 </main>

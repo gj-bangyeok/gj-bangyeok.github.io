@@ -434,8 +434,9 @@
 
   // ---------------------------------------------------------------- 지도
   function initMap(home) {
-    // 시청 동쪽은 바다라서, 시청이 지도 오른쪽에 오도록 중심을 서쪽으로 옮긴다
-    state.map = L.map('map', { zoomControl: true, attributionControl: true }).setView([home.lat + 0.15, home.lng - 0.75], 8);
+    state.home = home;
+    state.map = L.map('map', { zoomControl: true, attributionControl: true });
+    defaultView();
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18, attribution: '&copy; OpenStreetMap 기여자'
     }).addTo(state.map);
@@ -454,6 +455,29 @@
     state.facLayer = L.layerGroup().addTo(state.map);
     state.layer = L.layerGroup().addTo(state.map);
     state.map.on('click', function (e) { if (state.picking) placePick(e.latlng); });
+  }
+
+  // 처음 보는 지도 범위. 세로형 배치는 남한 본토와 제주가 지도 높이에 꽉 차게,
+  // 예전 배치는 시청 동쪽이 바다라서 시청이 지도 오른쪽에 오도록 중심을 서쪽으로 옮긴다
+  var KOREA_BOUNDS = [[33.12, 125.95], [38.62, 129.62]];
+  var HOME_LABEL_PAD = 100; // 동해안 오른쪽에 '경주시청' 이름표가 잘리지 않게 비워 두는 폭(px)
+  function defaultView() {
+    var home = state.home;
+    if (!state.map || !home) return;
+    if (isPortrait()) {
+      var map = state.map, b = L.latLngBounds(KOREA_BOUNDS), lp = $('legendPanel');
+      // 지도 보는 법 상자(오른쪽 위, 동해 쪽) 폭만큼 오른쪽을 비워도 거의 같은 확대 단계면 비워서 상자가 땅을 가리지 않게 한다
+      var lw = lp && lp.parentNode === $('centerCol') && !lp.classList.contains('folded') ? lp.offsetWidth + 24 : 0;
+      var right = Math.max(HOME_LABEL_PAD, lw);
+      // 0.25 단계까지 맞춰 꽉 채우고, 그 뒤 확대·축소는 예전처럼 정수 단계로 움직인다
+      map.options.zoomSnap = 0.25;
+      var zFull = map.getBoundsZoom(b, false, L.point(12 + HOME_LABEL_PAD, 24)), zSide = map.getBoundsZoom(b, false, L.point(12 + right, 24));
+      if (zSide < zFull - 0.25) right = HOME_LABEL_PAD;
+      map.fitBounds(b, { paddingTopLeft: [12, 12], paddingBottomRight: [right, 12], animate: false });
+      map.options.zoomSnap = 1;
+    } else {
+      state.map.setView([home.lat + 0.15, home.lng - 0.75], 8, { animate: false });
+    }
   }
 
   // ---------------------------------------------------------------- 방역 자원
@@ -2395,6 +2419,8 @@
     // 왼쪽 열 바로 오른쪽(지도 위)에 띄워 목록을 가리지 않는다. 자리가 없으면 아이콘 옆
     var col = anchor.closest('.col'), cr = col ? col.getBoundingClientRect() : r;
     var left = cr.right + gap;
+    // 세로형 배치에서는 지도가 열의 왼쪽에 있으므로 열 바로 왼쪽(지도 위)에 띄운다
+    if (isPortrait() && cr.left - gap - w >= 8) left = cr.left - gap - w;
     if (left + w > vw - 8) left = r.right + gap;
     if (left + w > vw - 8) left = Math.max(8, r.left - w - gap);
     var top = Math.min(r.top - 12, vh - hgt - 8);
@@ -2617,10 +2643,13 @@
           setTimeout(load, 5000);
           return;
         }
-        if (!state.map) initMap(data.home);
+        var firstView = !state.map;
+        if (firstView) initMap(data.home);
         state.data = data;
         state.netErr = null;
         render();
+        // 첫 그리기로 머리줄·알림 띠 높이가 정해진 뒤 지도 크기와 처음 범위를 다시 맞춘다
+        if (firstView) { state.map.invalidateSize(); defaultView(); }
       })
       .catch(function (e) {
         state.netErr = e.message;
@@ -2675,6 +2704,69 @@
       if (a) placeIconPop(a); else if (pop.el) closeIconPop(false);
     }, 200);
   });
+  // ---------------------------------------------------------------- 배치(세로형 지도 / 예전 배치)
+  // 세로형: 지도가 왼쪽 전체 높이, 가운데 열 = 상황 숫자·질병·시설·그래프, 오른쪽 열 = 최근 발생·가까운 주요 질병·방역 자원,
+  // '지도 보는 법'은 지도 오른쪽 위(동해 쪽) 접이식 상자. 예전 배치로 돌아갈 때는 각 패널을 원래 자리 표지 앞에 되돌린다
+  var LAYOUT_KEY = 'dash-layout', LEGEND_KEY = 'dash-legend';
+  var layoutMarks = null;
+  function isPortrait() { return document.body.classList.contains('portrait'); }
+  function applyLayout(mode, reset) {
+    var portrait = mode !== 'classic';
+    if (!layoutMarks) {
+      layoutMarks = ['statPanel', 'resPanel', 'chartPanel', 'recentPanel', 'legendPanel'].map(function (id) {
+        var n = $(id), mark = document.createComment(id);
+        n.parentNode.insertBefore(mark, n);
+        return { n: n, mark: mark };
+      });
+    }
+    if (portrait) {
+      var colL = $('colL'), colR = $('colR');
+      colL.insertBefore($('statPanel'), colL.firstChild);
+      colL.appendChild($('chartPanel'));
+      colR.insertBefore($('recentPanel'), colR.firstChild);
+      colR.appendChild($('resPanel'));
+      $('centerCol').appendChild($('legendPanel'));
+    } else {
+      layoutMarks.forEach(function (x) { x.mark.parentNode.insertBefore(x.n, x.mark); });
+    }
+    document.body.classList.toggle('portrait', portrait);
+    var btn = $('layoutBtn');
+    btn.textContent = portrait ? '배치: 세로 지도' : '배치: 예전';
+    btn.setAttribute('aria-pressed', portrait ? 'true' : 'false');
+    btn.title = portrait ? '누르면 예전 배치(가운데 지도, 양쪽 목록)로 바꿉니다' : '누르면 세로형 배치(왼쪽 큰 지도, 오른쪽 목록)로 바꿉니다';
+    if (reset) {
+      if (state.map) { state.map.invalidateSize(); defaultView(); }
+      if (state.chartArgs) drawChart(state.chartArgs.shown, state.chartArgs.all);
+      if (pop.el) closeIconPop(false);
+    }
+  }
+  function setLegendFold(folded) {
+    $('legendPanel').classList.toggle('folded', folded);
+    var b = $('legendFold');
+    b.setAttribute('aria-expanded', folded ? 'false' : 'true');
+    b.title = folded ? '지도 보는 법 펼치기' : '지도 보는 법 접기';
+  }
+  var layoutMode = 'portrait', legendFolded = false;
+  try { layoutMode = localStorage.getItem(LAYOUT_KEY) === 'classic' ? 'classic' : 'portrait'; legendFolded = localStorage.getItem(LEGEND_KEY) === 'folded'; } catch (e) { /* 저장소가 없어도 기본값 */ }
+  applyLayout(layoutMode, false);
+  setLegendFold(legendFolded);
+  $('layoutBtn').addEventListener('click', function () {
+    layoutMode = isPortrait() ? 'classic' : 'portrait';
+    try { localStorage.setItem(LAYOUT_KEY, layoutMode); } catch (e) { /* 무시 */ }
+    applyLayout(layoutMode, true);
+  });
+  $('legendMore').addEventListener('click', function () {
+    var open = $('legendPanel').classList.toggle('notes-open');
+    this.setAttribute('aria-expanded', open ? 'true' : 'false');
+    this.textContent = open ? '설명 접기' : '설명 보기';
+  });
+  $('legendFold').addEventListener('click', function () {
+    if (!isPortrait()) return; // 예전 배치에서는 늘 펼쳐 둔다
+    legendFolded = !legendFolded;
+    try { localStorage.setItem(LEGEND_KEY, legendFolded ? 'folded' : 'open'); } catch (e) { /* 무시 */ }
+    setLegendFold(legendFolded);
+  });
+
   tick(); setInterval(tick, 10000);
   setupManual();
   load(); setInterval(load, REFRESH_MS);

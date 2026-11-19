@@ -864,3 +864,141 @@ body.picking #map { cursor: crosshair; }
 .pact { margin-top: 8px; }
 .promote-note { border-left: 3px solid var(--watch); padding-left: 10px; }
 .promote-note[hidden] { display: none; }
+
+/* ---------- 세로형 지도 배치 (2026-11-19) ----------
+   body.portrait: 지도가 왼쪽에서 머리줄 아래부터 화면 맨 아래까지 차지하고,
+   가운데 열(#colL) = 경주시 기준 발생 · 질병별 발생·단계 · 시설 · 그래프,
+   오른쪽 열(#colR) = 최근 발생(길게) · 가까운 주요 질병 · 방역 자원.
+   '지도 보는 법'은 지도 오른쪽 위(동해 쪽) 접이식 상자. 패널 이동은 app.js 의 applyLayout() 이 한다. */
+.layout-btn { white-space: nowrap; }
+/* 머리줄 단추 묶음(배치·통계·발생 입력). 세로로 쌓아 상황 문장 자리를 넓힌다(예전 두 단추를 가로로 놓을 때보다 폭이 좁다) */
+.hbtns { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.hbtns > .manual-btn { justify-content: center; min-height: 30px; white-space: nowrap; }
+@media (max-width: 1500px) and (min-width: 1101px) {
+  .controls { gap: 14px; }
+  .clock { max-width: 300px; text-align: right; }
+}
+@media (max-width: 1100px) {
+  .hbtns { flex-direction: row; flex-wrap: wrap; }
+}
+body:not(.portrait) #legendFold { pointer-events: none; }
+body:not(.portrait) #legendFold::after { display: none; }
+@media (min-width: 1101px) {
+  body.portrait .board { grid-template-columns: clamp(560px, 46vw, 900px) minmax(0, 1fr) minmax(0, 1fr); }
+  body.portrait .center { grid-column: 1; grid-row: 1; grid-template-rows: minmax(0, 1fr); border-right: 1px solid var(--line); }
+  body.portrait #colL { grid-column: 2; grid-row: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  body.portrait #colR { grid-column: 3; grid-row: 1; border-left: 0; overflow: hidden; }
+  /* 오른쪽 열: 최근 발생이 남는 높이를 모두 쓰고 그 안에서만 스크롤 */
+  body.portrait #colR .panel.grow { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  /* 가까운 주요 질병은 열 높이의 38%까지만(넘치면 그 안에서 스크롤). 남는 높이는 모두 최근 발생 */
+  body.portrait #colR #nearPanel { flex: 0 1 auto; display: flex; flex-direction: column; max-height: 38%; border-top: 1px solid var(--line); }
+  body.portrait #colR #nearest { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  body.portrait #colR #resPanel { flex: none; border-bottom: 0; }
+  /* 가운데 열 맨 위 상황 숫자 */
+  body.portrait #statPanel { padding-top: 12px; padding-bottom: 12px; }
+  body.portrait #statPanel .panel-head { margin-bottom: 8px; }
+  /* 그래프는 열 맨 아래에서 남는 높이를 채운다(너무 커지지 않게 상한) */
+  body.portrait #colL .chart-panel { flex: 1 1 0; display: flex; flex-direction: column; border-top: 0; min-height: 220px; max-height: 420px; }
+  /* 두 열에 모두 담기도록 목록 줄 높이를 조금 줄인다 */
+  body.portrait #colL #counts { gap: 0; }
+  body.portrait #colL #counts .count { min-height: 34px; padding-top: 1px; padding-bottom: 1px; }
+  body.portrait #colL #counts .count .n { font-size: 24px; }
+  body.portrait #colR .rows .row { padding-top: 6px; padding-bottom: 6px; row-gap: 0; }
+  body.portrait #colL .chart-panel .panel-head { flex-wrap: wrap; row-gap: 2px; }
+  body.portrait #colL .chart-note { flex-basis: 100%; text-align: left; }
+  body.portrait #colL .chart { flex: 1 1 0; height: auto; min-height: 0; }
+  /* 지도 보는 법: 지도 오른쪽 위(동해 쪽) 상자. 처음 범위는 이 상자 폭만큼 오른쪽을 비워 한반도를 가리지 않게 맞춘다(app.js defaultView) */
+  body.portrait .center > .legend-panel {
+    position: absolute; top: 12px; right: 12px; z-index: 800;
+    width: min(320px, calc(100% - 80px)); max-height: calc(100% - 60px);
+    padding: 10px 14px; overflow-y: auto; flex: none;
+    background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius);
+    box-shadow: 0 2px 10px var(--shadow);
+  }
+  body.portrait .legend-panel > h2 { margin-bottom: 8px; font-size: var(--fs-body); }
+  body.portrait .legend-panel.folded { width: auto; }
+  body.portrait .legend-panel.folded > h2 { margin-bottom: 0; }
+  body.portrait .legend-panel.folded .legend-body { display: none; }
+  body.portrait .legend-panel .legend { gap: 4px 12px; margin-bottom: 8px; }
+  body.portrait .legend-panel .legend li { font-size: 14px; gap: 8px; }
+  body.portrait .legend-panel .hint { font-size: 13px; line-height: 1.4; }
+  body.portrait .legend-panel .hint + .hint { margin-top: 4px; }
+  /* 과거 구간 표시는 범례와 겹치지 않게 지도 왼쪽 위(확대 단추 옆)로 */
+  body.portrait .past-tag { left: 64px; transform: none; }
+}
+/* 범례 설명 펼치기 단추: 세로형의 좁은 범례(아래)에서만 쓴다 */
+.legend-more { display: none; }
+/* 지도가 좁거나 낮은 화면: 범례를 한 줄씩 좁게 놓고 설명은 「설명 보기」로 펼친다 */
+@media (min-width: 1101px) and (max-width: 1500px), (min-width: 1101px) and (max-height: 900px) {
+  body.portrait .center > .legend-panel { width: 214px; padding: 8px 12px; }
+  body.portrait .center > .legend-panel.folded { width: auto; }
+  body.portrait .legend-panel .legend { grid-template-columns: minmax(0, 1fr); gap: 2px; margin-bottom: 6px; }
+  body.portrait .legend-panel .legend li { font-size: 13px; }
+  body.portrait .legend-panel .legend li.stage-key { gap: 2px 8px; }
+  body.portrait .legend-panel .ring { width: 16px; height: 16px; }
+  body.portrait .legend-panel > h2 { margin-bottom: 6px; }
+  body.portrait .legend-more {
+    display: inline-flex; align-items: center; min-height: 26px; padding: 0 10px; margin-bottom: 4px;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+    background: transparent; color: var(--text-2); font-size: 13px; cursor: pointer;
+  }
+  body.portrait .legend-more:hover { background: var(--surface-2); color: var(--text); }
+  body.portrait .legend-panel:not(.notes-open) .legend-notes { display: none; }
+}
+/* 낮은 화면(1366x768 등): 그래프와 상황 숫자를 조금 줄인다 */
+@media (min-width: 1101px) and (max-height: 900px) {
+  body.portrait #statPanel { padding-top: 6px; padding-bottom: 6px; }
+  body.portrait #statPanel .panel-head { margin-bottom: 2px; }
+  body.portrait #statPanel .stat b { font-size: 26px; line-height: 1.15; }
+  body.portrait #colL .chart-panel { min-height: 150px; padding-top: 6px; padding-bottom: 4px; }
+  body.portrait .board { grid-template-columns: clamp(560px, 44vw, 900px) minmax(0, 1fr) minmax(0, 1fr); }
+  body.portrait #colR .panel { padding-top: 8px; padding-bottom: 8px; }
+  body.portrait #colR #nearPanel { max-height: 31%; }
+}
+/* 낮거나(높이 900 이하) 좁은(폭 1500 이하) 화면: 오른쪽 열 줄을 예전 왼쪽 열처럼 줄이고,
+   가운데 열의 질병은 두 칸, 시설은 머리글과 한 줄로 놓는다(예전 1366x768 왼쪽 열과 같은 방식) */
+@media (min-width: 1101px) and (max-width: 1500px), (min-width: 1101px) and (max-height: 900px) {
+  body.portrait #colL .panel { padding: 6px 14px; }
+  body.portrait #colL #counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 4px; margin-bottom: 2px; grid-auto-flow: row dense; }
+  body.portrait #colL #counts li.long { grid-column: 1 / -1; }
+  body.portrait #colL #counts .count { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 6px; min-height: 28px; padding: 0 4px; font-size: 15px; }
+  body.portrait #colL #counts .count .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.portrait #colL #counts .count .n { font-size: 19px; }
+  body.portrait #colL #counts .ico-btn { left: 3px; }
+  body.portrait #colL .more-btn { min-height: 22px; padding: 0 4px; font-size: 13px; }
+  body.portrait #colL .stage-row { margin-top: 9px; margin-bottom: 2px; }
+  body.portrait #colL .hint { font-size: 13px; line-height: 1.3; }
+  body.portrait #colL .count-foot .hint { line-height: 22px; }
+  body.portrait #colL .panel-head { margin-bottom: 4px; }
+  body.portrait #colL .fac-panel { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; align-items: center; }
+  body.portrait #colL .fac-panel > .panel-head { display: contents; }
+  body.portrait #colL .fac-panel .fac-sum { text-align: right; }
+  body.portrait #colL .fac-sum:empty { display: none; }
+  body.portrait #colL .fac-panel .counts { margin-bottom: 0; }
+  body.portrait #colL .fac-row .count { min-height: 28px; }
+  body.portrait #colL .fac-go { min-height: 26px; padding: 0 10px; }
+  body.portrait #colL .fac-panel .hint { display: none; }
+  /* 오른쪽 열: 최근 발생 줄 높이를 줄인다 */
+  body.portrait #colR .rows .row { padding: 4px 6px; row-gap: 0; column-gap: 8px; }
+  body.portrait #colR .row .t { font-size: 16px; line-height: 1.25; }
+  body.portrait #colR .row .a, body.portrait #colR .row .d { font-size: 14px; line-height: 1.3; }
+  body.portrait #colR .row .t .stg { line-height: 18px; vertical-align: 1px; }
+  body.portrait #colR .row .t .stg-antigen { line-height: 16px; }
+  body.portrait #colR .panel.grow .panel-head { margin-bottom: 2px; }
+  body.portrait #colR #resPanel { display: flex; align-items: baseline; gap: 10px; }
+  body.portrait #colR #resPanel .panel-head { flex: none; margin-bottom: 0; }
+  body.portrait #colR #resPanel h2 { font-size: var(--fs-body); }
+  body.portrait #colR .res { font-size: 14px; line-height: 1.4; }
+}
+/* 폭 1300 이하: 머리줄 상황 문장 글자를 조금 줄여 줄 수를 줄인다 */
+@media (min-width: 1101px) and (max-width: 1300px) {
+  :root { --fs-head: 24px; }
+  .subline { font-size: var(--fs-meta); }
+}
+/* 오른쪽이 좁은 화면(폭 1101~1279px): 두 열을 한 열로 합치고 열 안에서만 스크롤 */
+@media (min-width: 1101px) and (max-width: 1279px) {
+  body.portrait .board { grid-template-columns: minmax(0, 52fr) minmax(0, 48fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  body.portrait .center { grid-row: 1 / 3; }
+  body.portrait #colL { grid-column: 2; grid-row: 1; border-right: 0; border-bottom: 1px solid var(--line); }
+  body.portrait #colR { grid-column: 2; grid-row: 2; }
+}
