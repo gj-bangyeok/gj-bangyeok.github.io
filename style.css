@@ -1108,3 +1108,43 @@ body:not(.portrait) #legendFold::after { display: none; }
   body.portrait #colL { grid-column: 2; grid-row: 7; }
   body.portrait #colR { grid-column: 2; grid-row: 8; }
 }
+
+/* ---------------------------------------------------------------- 배경 지도(일반 / 위성) */
+/* 확대 단추 아래 「일반 / 위성」 단추. 범례 상자(오른쪽)와 제목 표식(확대 단추 오른쪽)과 겹치지 않는다 */
+.basemap-ctl { display: flex; flex-direction: column; background: var(--surface); }
+.basemap-ctl button {
+  width: 44px; height: 30px; padding: 0; border: 0; border-bottom: 1px solid var(--line);
+  background: var(--surface); color: var(--text-2); font: 600 13px/30px var(--font); cursor: pointer;
+}
+.basemap-ctl button:last-child { border-bottom: 0; }
+.basemap-ctl button:hover { background: var(--surface-2); color: var(--text); }
+.basemap-ctl button[aria-pressed="true"] { background: var(--map-ink); color: #fff; }
+.basemap-ctl button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 위성 배경: 일반 지도용 색 보정은 끄고, 표식에 흰 테두리를 둘러 어두운 땅·바다에서도 보이게 한다 */
+body.sat #map { background: #1d2a33; }
+body.sat #map .leaflet-tile-pane { filter: none; }
+:root[data-theme="dark"] body.sat #map .leaflet-tile-pane { filter: brightness(0.9); }
+body.sat #map .mk { filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1.5px #fff) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5)); }
+body.sat #map .zone-c { stroke-width: 2.5px; stroke-opacity: 1; }
+body.sat #map .home-ring { stroke: #fff; stroke-opacity: 0.95; stroke-width: 2.5px; }
+body.sat #map .home-dot { box-shadow: 0 0 0 2px #fff, 0 1px 4px var(--shadow); }
+body.sat #map .home-pin { box-shadow: 0 0 0 1.5px #fff, 0 1px 4px var(--shadow); }
+/* EOX 위성 위 한글 지명 */
+.sat-lbl-box { width: 0; height: 0; }
+.sat-lbl {
+  position: absolute; left: 0; top: 0; transform: translate(-50%, -50%);
+  color: #fff; font-weight: 600; white-space: nowrap; pointer-events: none;
+  text-shadow: 0 0 2px #000, 0 0 3px #000, 0 1px 2px #000;
+}
+.sat-lbl.lv-sido { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
+.sat-lbl.lv-sgg { font-size: 13px; }
+.sat-lbl.lv-emd { font-size: 12px; color: #f3f0d8; }
+.sat-lbl.lv-ri { font-size: 11px; font-weight: 500; color: #e4e9ec; }
+/* 위성지도를 불러오지 못했을 때 잠깐 띄우는 안내(지도 안쪽 왼쪽 아래, 출처 표기 위) */
+.map-note {
+  position: absolute; left: 12px; bottom: 34px; z-index: 1000;
+  max-width: min(440px, calc(100% - 24px)); padding: 8px 14px; border: 1px solid var(--watch); border-radius: var(--radius-sm);
+  background: var(--watch-bg); color: var(--watch); font-size: var(--fs-meta); font-weight: 600;
+  box-shadow: 0 2px 8px var(--shadow); pointer-events: none;
+}
+.map-note[hidden] { display: none; }

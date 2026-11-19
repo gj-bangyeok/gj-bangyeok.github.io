@@ -437,12 +437,10 @@
     state.home = home;
     state.map = L.map('map', { zoomControl: true, attributionControl: true });
     defaultView();
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18, attribution: '&copy; OpenStreetMap 기여자'
-    }).addTo(state.map);
+    initBasemap();
     L.circle([home.lat, home.lng], {
       radius: WATCH_KM * 1000, color: token('--map-ink'), weight: 2, opacity: 0.75, dashArray: '10 8',
-      fill: false, interactive: false
+      fill: false, interactive: false, className: 'home-ring'
     }).addTo(state.map);
     // 시청 바로 옆에 거점소독시설이 있어서, 이름표는 점 오른쪽(바다 쪽)으로 비켜 둔다
     var pin = el('div', 'home-mark');
@@ -455,6 +453,213 @@
     state.facLayer = L.layerGroup().addTo(state.map);
     state.layer = L.layerGroup().addTo(state.map);
     state.map.on('click', function (e) { if (state.picking) placePick(e.latlng); });
+  }
+
+  // ---------------------------------------------------------------- 배경 지도(일반 / 위성)
+  // 일반: OpenStreetMap. 위성: 브이월드 영상+한글 지명(키가 있을 때만) → EOX Sentinel-2 2016(키 없음, CC BY 4.0).
+  // EOX 위성에는 이용 조건이 분명한 지명 겹침 층이 없어서, 현황판 지명 좌표표(api/places)로 한글 지명을 직접 얹는다.
+  // 위성 타일이 처음 10장 중 7장 이상 실패하거나 15초 동안 한 장도 못 받으면 다음 후보로 넘어가고,
+  // 후보가 모두 안 되면 일반 지도로 돌아가 안내한다(행정망 등에서 막힌 경우). 고른 배경은 이 브라우저에 기억한다.
+  var BASE_KEY = 'dash-basemap';
+  var SAT_PROBE = 10, SAT_BAD = 7, SAT_WAIT_MS = 15000, BASE_CFG_WAIT_MS = 3000;
+  var OSM_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  var EOX_URL = 'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg';
+  var EOX_ATTR = '위성 <a href="https://cloudless.eox.at" target="_blank" rel="noopener">EOxCloudless</a> by EOX IT Services GmbH ' +
+    '(Contains modified Copernicus Sentinel data 2016), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>' +
+    ' · 지명 위치 &copy; OpenStreetMap 기여자';
+  var VW_ATTR = '위성·지명 &copy; <a href="https://www.vworld.kr" target="_blank" rel="noopener">국토교통부 브이월드</a>';
+  var SAT_FAIL_MSG = '이 PC에서는 위성지도를 불러올 수 없습니다. 일반 지도로 돌아갔습니다.';
+  var bm = { mode: 'map', idx: 0, map: null, sat: [], probe: null, vkey: '', ready: false,
+    labels: null, labelData: null, labelTimer: 0, btns: {}, noteT: 0 };
+
+  function initBasemap() {
+    var map = state.map;
+    bm.map = L.tileLayer(OSM_URL, { maxZoom: 18, attribution: '&copy; OpenStreetMap 기여자' });
+    map.createPane('satOver').style.zIndex = 250;   // 브이월드 지명 겹침(위성 위, 방역대 원 아래)
+    var lp = map.createPane('satLabels');           // 직접 얹는 한글 지명(방역대 원 위, 표식 아래)
+    lp.style.zIndex = 450; lp.style.pointerEvents = 'none';
+    bm.labels = L.layerGroup();
+    basemapControl().addTo(map);
+    try { bm.mode = localStorage.getItem(BASE_KEY) === 'sat' ? 'sat' : 'map'; } catch (e) { /* 저장소가 없으면 일반 지도 */ }
+    if (bm.mode === 'map') bm.map.addTo(map);
+    setBaseButtons();
+    // 브이월드 키는 있을 때만 받는다(이 PC: server.py 의 /api/basemap, 공개본: 대표가 공개를 허락했을 때만 api/basemap).
+    // 못 받거나 늦으면 키 없이 되는 위성만 쓴다
+    var cfg = fetch('api/basemap', { cache: 'no-cache' }).then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; });
+    var late = new Promise(function (ok) { setTimeout(function () { ok(null); }, BASE_CFG_WAIT_MS); });
+    Promise.race([cfg, late]).then(function (c) {
+      var k = c && typeof c.vworld === 'string' ? c.vworld.trim() : '';
+      bm.vkey = /^[A-Za-z0-9-]{8,64}$/.test(k) ? k : '';
+      buildSat();
+      bm.ready = true;
+      applyBase(bm.mode, false);
+    });
+    map.on('zoomend moveend', function () {
+      if (bm.mode !== 'sat' || !curSat() || !curSat().labels) return;
+      clearTimeout(bm.labelTimer);
+      bm.labelTimer = setTimeout(drawSatLabels, 120);
+    });
+  }
+
+  function buildSat() {
+    bm.sat = [];
+    if (bm.vkey) {
+      var vw = 'https://api.vworld.kr/req/wmts/1.0.0/' + bm.vkey;
+      bm.sat.push({ name: 'vworld',
+        base: L.tileLayer(vw + '/Satellite/{z}/{y}/{x}.jpeg', { minNativeZoom: 6, maxNativeZoom: 19, maxZoom: 18, attribution: VW_ATTR }),
+        over: L.tileLayer(vw + '/Hybrid/{z}/{y}/{x}.png', { minNativeZoom: 6, maxNativeZoom: 19, maxZoom: 18, pane: 'satOver' }) });
+    }
+    // 2016년 모자이크(10m 해상도)는 15단계까지만 받고 그 위는 늘려 보여 준다(EOX 공개 타일 공정 이용)
+    bm.sat.push({ name: 'eox', labels: true,
+      base: L.tileLayer(EOX_URL, { maxNativeZoom: 15, maxZoom: 18, attribution: EOX_ATTR }) });
+  }
+
+  function curSat() { return bm.sat[bm.idx] || null; }
+
+  function applyBase(mode, user) {
+    var map = state.map;
+    if (!map) return;
+    bm.mode = mode === 'sat' ? 'sat' : 'map';
+    stopProbe();
+    [bm.map, bm.labels].forEach(function (l) { if (map.hasLayer(l)) map.removeLayer(l); });
+    bm.sat.forEach(function (c) { [c.base, c.over].forEach(function (l) { if (l && map.hasLayer(l)) map.removeLayer(l); }); });
+    var c = bm.mode === 'sat' && bm.ready ? curSat() : null;
+    if (c) {
+      c.base.addTo(map);
+      if (c.over) c.over.addTo(map);
+      if (c.labels) { bm.labels.addTo(map); drawSatLabels(); }
+      startProbe(c);
+    } else if (bm.mode === 'map') {
+      bm.map.addTo(map);
+    }
+    document.body.classList.toggle('sat', bm.mode === 'sat');
+    var cs = curSat();
+    if (bm.btns.sat) bm.btns.sat.title = cs && cs.name === 'vworld' ? '위성 사진(국토교통부 브이월드 영상지도와 한글 지명)' :
+      '위성 사진(2016년 Sentinel-2 모자이크, 10m 해상도. 경주 등 일부 지역은 구름이 끼어 있습니다). 이 PC에서 불러오지 못하면 일반 지도로 돌아갑니다';
+    setBaseButtons();
+    if (user) { try { localStorage.setItem(BASE_KEY, bm.mode); } catch (e) { /* 무시 */ } }
+  }
+
+  function basemapControl() {
+    var Ctl = L.Control.extend({
+      options: { position: 'topleft' },
+      onAdd: function () {
+        var box = L.DomUtil.create('div', 'leaflet-bar basemap-ctl');
+        box.setAttribute('role', 'group');
+        box.setAttribute('aria-label', '배경 지도');
+        [['map', '일반', '일반 지도(OpenStreetMap)'], ['sat', '위성', '위성 사진. 이 PC에서 불러오지 못하면 일반 지도로 돌아갑니다']].forEach(function (d) {
+          var b = L.DomUtil.create('button', null, box);
+          b.type = 'button'; b.textContent = d[1]; b.title = d[2];
+          b.addEventListener('click', function () {
+            if (d[0] === 'sat') bm.idx = 0; // 다시 고르면 첫 후보부터 다시 시도
+            applyBase(d[0], true);
+          });
+          bm.btns[d[0]] = b;
+        });
+        L.DomEvent.disableClickPropagation(box);
+        L.DomEvent.disableScrollPropagation(box);
+        return box;
+      }
+    });
+    return new Ctl();
+  }
+
+  function setBaseButtons() {
+    Object.keys(bm.btns).forEach(function (k) { bm.btns[k].setAttribute('aria-pressed', String(k === bm.mode)); });
+  }
+
+  // ---------- 위성 타일이 실제로 오는지 지켜본다 ----------
+  function startProbe(c) {
+    var p = bm.probe = { ok: 0, bad: 0, layer: c.base };
+    function check() {
+      if (bm.probe !== p) return;
+      if (p.bad >= SAT_BAD) satFailed();
+      else if (p.ok + p.bad >= SAT_PROBE) stopProbe(); // 처음 10장 중 대부분이 왔으면 지켜보기를 끝낸다
+    }
+    p.onLoad = function () { p.ok++; check(); };
+    p.onErr = function () { p.bad++; check(); };
+    c.base.on('tileload', p.onLoad);
+    c.base.on('tileerror', p.onErr);
+    // 막힌 망에서는 오류도 없이 응답이 오지 않을 수 있다
+    p.timer = setTimeout(function () { if (bm.probe === p && p.ok === 0) satFailed(); }, SAT_WAIT_MS);
+  }
+
+  function stopProbe() {
+    var p = bm.probe;
+    if (!p) return;
+    p.layer.off('tileload', p.onLoad);
+    p.layer.off('tileerror', p.onErr);
+    clearTimeout(p.timer);
+    bm.probe = null;
+  }
+
+  function satFailed() {
+    stopProbe();
+    if (bm.idx + 1 < bm.sat.length) { bm.idx++; applyBase('sat', false); return; } // 브이월드가 안 되면 EOX로
+    bm.idx = 0;
+    applyBase('map', true); // 다음에 열 때도 일반 지도로 시작
+    mapNote(SAT_FAIL_MSG);
+  }
+
+  function mapNote(msg) {
+    var box = $('mapNote');
+    if (!box) {
+      box = el('div', 'map-note');
+      box.id = 'mapNote';
+      box.setAttribute('role', 'status');
+      $('map').appendChild(box); // 지도 안쪽 왼쪽 아래(범례·차트와 겹치지 않음)
+      L.DomEvent.disableClickPropagation(box);
+    }
+    box.textContent = msg;
+    box.hidden = false;
+    clearTimeout(bm.noteT);
+    bm.noteT = setTimeout(function () { box.hidden = true; }, 8000);
+  }
+
+  // ---------- EOX 위성 위 한글 지명(현황판 지명 좌표표) ----------
+  // 전국 보기: 시도, 9~10단계: 시군구, 11~12단계: 시군구와 읍면동, 13단계 이상: 읍면동과 리
+  function median(a) { a = a.slice().sort(function (x, y) { return x - y; }); return a[Math.floor(a.length / 2)]; }
+  function satLabelData() {
+    if (bm.labelData || !places.p) return bm.labelData;
+    var d = { sido: [], sgg: [], emd: [], ri: [] };
+    Object.keys(places.p).forEach(function (sd) {
+      var lat = [], lng = [];
+      Object.keys(places.p[sd]).forEach(function (k) {
+        var c = places.p[sd][k], t = k.split(' ');
+        if (!c || c.length < 2) return;
+        var row = { name: t[t.length - 1], ll: [c[0], c[1]] };
+        if (t.length === 1) { d.sgg.push(row); lat.push(c[0]); lng.push(c[1]); }
+        else if (t.length === 2) d.emd.push(row);
+        else d.ri.push(row);
+      });
+      if (lat.length) d.sido.push({ name: SIDO_FULL[sd] || sd, ll: [median(lat), median(lng)] });
+    });
+    bm.labelData = d;
+    return d;
+  }
+
+  function drawSatLabels() {
+    var map = state.map;
+    if (!map || !map.hasLayer(bm.labels)) return;
+    var d = satLabelData();
+    if (!d) { loadPlaces().then(function () { if (places.p && Object.keys(places.p).length) drawSatLabels(); }); return; }
+    var z = map.getZoom(), b = map.getBounds().pad(0.1), lv;
+    if (z < 9) lv = ['sido'];
+    else if (z < 11) lv = ['sgg'];
+    else if (z < 13) lv = ['sgg', 'emd'];
+    else lv = ['emd', 'ri'];
+    bm.labels.clearLayers();
+    var n = 0;
+    lv.forEach(function (k) {
+      d[k].forEach(function (r) {
+        if (n >= 400 || !b.contains(r.ll)) return;
+        var t = el('span', 'sat-lbl lv-' + k, r.name);
+        L.marker(r.ll, { icon: L.divIcon({ className: 'sat-lbl-box', html: t, iconSize: null, iconAnchor: [0, 0] }),
+          pane: 'satLabels', interactive: false, keyboard: false }).addTo(bm.labels);
+        n++;
+      });
+    });
   }
 
   // 처음 보는 지도 범위. 세로형 배치는 남한 본토와 제주가 지도 높이에 꽉 차게,
@@ -692,7 +897,7 @@
         [[10000, 0.04, '6 6', 1], [3000, 0.08, null, 1.5], [500, 0.3, null, 1]].forEach(function (z) {
           L.circle([it.lat, it.lng], {
             radius: z[0], color: zone, weight: pre ? 1.5 : z[3], opacity: pre ? 0.7 : 0.75, dashArray: pre ? '2 8' : rough ? '4 6' : z[2],
-            fillColor: zone, fillOpacity: pre ? z[1] * 0.4 : z[1], interactive: false
+            fillColor: zone, fillOpacity: pre ? z[1] * 0.4 : z[1], interactive: false, className: 'zone-c'
           }).addTo(state.layer);
         });
       }
